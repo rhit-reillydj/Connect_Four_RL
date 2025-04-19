@@ -2,7 +2,7 @@
 Training a Connect Four model with the AlphaGo format. 
 
 ### The Model Uses:
-- A Convolutiona Neural Network
+- A Convolutional Neural Network
 - Deep Reinforcement Learning through Self-Play
 -   Proximal Policy Optimization (PPO)
 - Monte-Carlo Tree Search
