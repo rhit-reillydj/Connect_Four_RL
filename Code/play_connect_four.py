@@ -10,8 +10,8 @@ import torch
 import pygame
 
 from connect_four import ConnectFourEnv
-from CNNModel import ConnectFourCNN
-from ReinforcementLearning import MCTS, MCTSNode, clone_env
+from cnn_model import ConnectFourCNN
+from reinforcement_learning import MCTS, MCTSNode, clone_env
 
 # Define colors
 BLUE = (0, 0, 255)
@@ -96,7 +96,7 @@ def main():
     # Load trained CNN model.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ConnectFourCNN().to(device)
-    model.load_state_dict(torch.load("best_model.pt", map_location=device))
+    model.load_state_dict(torch.load("Models/best_model.pt", map_location=device))
     model.eval()
 
     # Initial draw

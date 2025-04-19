@@ -1,4 +1,4 @@
-# ReinforcementLearning.py
+# reinforcement_learning.py
 
 import os
 import copy
@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from multiprocessing import Pool, cpu_count
 
 from connect_four import ConnectFourEnv
-from CNNModel import ConnectFourCNN
+from cnn_model import ConnectFourCNN
 
 torch.backends.cudnn.benchmark = True  # Optimizes CNN ops
 
@@ -294,10 +294,10 @@ def main():
     best_network = ConnectFourCNN(input_channels=3).to(device)
     
     # Try loading existing best model
-    if os.path.exists('best_model.pt'):
+    if os.path.exists('Models/best_model.pt'):
         print("Loading existing best model...")
         try:
-            checkpoint = torch.load('best_model.pt', map_location=device)
+            checkpoint = torch.load('Models/best_model.pt', map_location=device)
             network.load_state_dict(checkpoint)
             best_network.load_state_dict(checkpoint)
         except:
@@ -311,14 +311,14 @@ def main():
     
     optimizer = optim.Adam(network.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=300)
-    num_iterations = 1000
+    num_iterations = 2000
     
     params = {
         'num_iterations': num_iterations,
-        'num_self_play': 50,
-        'mcts_simulations': 42,
+        'num_self_play': 100,
+        'mcts_simulations': 200,
         'batch_size': 512,
-        'eval_interval': 50,
+        'eval_interval': 25,
         'temperature': np.linspace(0.7, 0.5, num_iterations)
     }
     
@@ -329,7 +329,7 @@ def main():
         temperature = params['temperature'][iteration-1]
         
         # Self-play
-        with Pool(cpu_count()) as pool:
+        with Pool(int(cpu_count() * (2/3))) as pool:
             args = [(network.state_dict(), 
                     params['mcts_simulations'],
                     device.type,
@@ -350,11 +350,12 @@ def main():
         # Evaluation against previous best
         if iteration % params['eval_interval'] == 0:
             current_win_rate = evaluate_against_baseline(network, best_network, device=device)
+            torch.save(best_network.state_dict(), "Models/current_model.pt")
             
             if current_win_rate >= 0.5:  # Only need >50% win rate
                 print(f"🔥 New best model! Win rate: {current_win_rate*100:.1f}%")
                 best_network.load_state_dict(network.state_dict())
-                torch.save(best_network.state_dict(), "best_model.pt")
+                torch.save(best_network.state_dict(), "Models/best_model.pt")
         
         print(f"Iteration {iteration} | Loss: {np.mean(losses) if losses else 0:.4f} | "
               f"Time: {time.time()-start_time:.2f}s")
