@@ -7,15 +7,15 @@ from utils import dotdict # Assuming a utils.py for dotdict or use Namespace dir
 
 # Default arguments (can be overridden by command line or a config file)
 args = dotdict({
-    'num_iters': 25,          # Number of training iterations.
-    'num_eps': 35,            # Number of self-play games to generate per iteration.
-    'temp_threshold': 10,     # Number of moves after which temperature becomes 0 for action selection in self-play.
-    'update_threshold': 0.55, # Win rate threshold to accept new model in Arena.
-    'max_len_of_queue': 200000, # Maximum size of the training examples deque.
-    'num_mcts_sims': 200,      # Number of MCTS simulations per move.
-    'arena_compare': 10,      # Number of games to play in Arena for model comparison.
+    'num_iters': 10,          # Number of training iterations.
+    'num_eps': 60,            # Number of self-play games to generate per iteration.
+    'temp_threshold': 5,     # Number of moves after which temperature becomes 0 for action selection in self-play.
+    'update_threshold': 0.50,   # Win rate threshold to accept new model in Arena.
+    'max_len_of_queue': 100000, # Maximum size of the training examples deque.
+    'num_mcts_sims': 200,       # Number of MCTS simulations per move.
+    'arena_compare': 20,      # Number of games to play in Arena for model comparison.
     'arena_verbose': False,   # Whether to print Arena game details.
-    'cpuct': 1.0,             # Exploration constant for PUCT.
+    'cpuct': 1.5,             # Exploration constant for PUCT.
     
     'checkpoint': './temp_connect_four/', # Folder to save checkpoints and examples.
     'load_model': True,       # Whether to load a saved model on startup.
@@ -24,7 +24,7 @@ args = dotdict({
 
     # Neural Network specific args
     'lr': 0.001,              # Learning rate.
-    'epochs': 10,             # Number of training epochs per iteration.
+    'epochs': 15,             # Number of training epochs per iteration.
     'batch_size': 64,         # Training batch size.
     'num_res_blocks': 5,      # Number of residual blocks in NNet.
     'num_channels': 64,       # Number of channels in NNet conv layers.

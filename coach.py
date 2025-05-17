@@ -39,7 +39,7 @@ class Coach():
         # Create a new instance of the nnet's class for pnet, using the same args
         self.pnet = self.nnet.__class__(self.game, args) 
         self.args = args
-        # self.mcts = MCTS(self.game, self.nnet, self.args) # Main MCTS not strictly needed if created fresh per move
+        self.mcts = MCTS(self.game, self.nnet, self.args) # Reusable MCTS instance
         self.train_examples_history = deque([], maxlen=self.args.get('max_len_of_queue', 20000))
         self.skip_first_self_play = False
 
@@ -49,12 +49,8 @@ class Coach():
             if os.path.exists(model_file):
                 print(f"Loading model from {model_file}...")
                 self.nnet.load_checkpoint(folder=load_folder, filename=load_file)
-                # Try to load corresponding training examples if a convention is established
-                # example_iter_to_load = self.args.get('load_examples_iter', 0) # Example arg
-                # if example_iter_to_load > 0:
-                #     self.load_train_examples(example_iter_to_load)
-                # else: # Or load a default named history file
-                loaded_hist = self.load_train_examples() # Tries to load default name
+                self.mcts.set_nnet(self.nnet) # Update MCTS with the loaded nnet
+                loaded_hist = self.load_train_examples() 
                 if loaded_hist:
                     self.train_examples_history = loaded_hist
                     print(f"Loaded {len(self.train_examples_history)} training examples.")
@@ -78,34 +74,33 @@ class Coach():
         current_player = 1
         episode_step = 0
         
+        self.mcts.set_nnet(self.nnet) # Ensure MCTS is using the primary nnet for self-play
+
         while True:
             episode_step += 1
             canonical_board = self.game.get_canonical_form(board, current_player)
             temp = int(episode_step < self.args.get('temp_threshold', 15))
             
-            # Create a new MCTS instance for each move decision to ensure a fresh tree search
-            episode_mcts = MCTS(self.game, self.nnet, self.args)
-            pi = episode_mcts.getActionProb(canonical_board, temp=temp)
+            self.mcts.reset_search_state() # Reset MCTS state for new move
+            pi = self.mcts.getActionProb(canonical_board, temp=temp)
             
             sym = self.game.get_symmetries(canonical_board, pi)
             for b_sym, p_sym in sym:
                 train_examples.append([b_sym, current_player, p_sym, None]) 
 
             action = np.random.choice(len(pi), p=pi)
-            # Ensure action is valid (MCTS should only return valid policies, but good to be safe if pi can be noisy)
+            
             if not self.game.get_valid_moves(canonical_board)[action]:
                 print(f"Warning: MCTS chose an invalid action {action} with pi {pi}. Board:\n{canonical_board}")
-                # Fallback: choose a random valid action if MCTS fails (should be rare)
                 valid_actions = np.where(self.game.get_valid_moves(canonical_board) == 1)[0]
-                if len(valid_actions) == 0: # Should be a draw or error
+                if len(valid_actions) == 0: 
                     print("Error: No valid moves left but game not ended by MCTS.")
                     game_result = self.game.get_game_ended(board, current_player)
-                    # Proceed to reward assignment with this game_result
-                    break # Exit while loop
+                    break 
                 action = np.random.choice(valid_actions)
                 
-            board, next_player_val = self.game.get_next_state(board, current_player, action)
-            game_result = self.game.get_game_ended(board, current_player) 
+            board, next_player_val, move_row = self.game.get_next_state(board, current_player, action)
+            game_result = self.game.get_game_ended(board, current_player, last_move_col=action, last_move_row=move_row)
 
             if game_result != 0:
                 final_examples = []
@@ -117,16 +112,14 @@ class Coach():
                 return final_examples
             current_player = next_player_val
         
-        # This part is reached if loop exited due to no valid moves error (should be rare)
-        # Assign rewards based on the game_result obtained before break
         final_examples = []
-        if game_result !=0: # Ensure game_result was set
+        if game_result !=0: 
             for hist_board, hist_player, hist_pi, _ in train_examples:
                 if hist_player == current_player:
                     final_examples.append((hist_board, hist_pi, game_result))
                 else: 
                     final_examples.append((hist_board, hist_pi, -game_result))
-        return final_examples # Might be empty if game loop had issues early
+        return final_examples
 
     def learn(self):
         for i in range(1, self.args.get('num_iters', 100) + 1):
@@ -137,13 +130,14 @@ class Coach():
                 num_eps_to_run = self.args.get('num_eps', 50)
                 for eps in range(num_eps_to_run):
                     start_time = time.time()
+                    # self.mcts.set_nnet(self.nnet) # Already set at start of execute_episode or after training
                     new_examples = self.execute_episode()
-                    if new_examples: # Only extend if new examples were generated
+                    if new_examples: 
                         iteration_train_examples.extend(new_examples)
                     print(f"Self-Play Episode {eps+1}/{num_eps_to_run} completed in {time.time()-start_time:.2f}s. Examples: {len(new_examples if new_examples else [])}")
                 
                 self.train_examples_history.extend(iteration_train_examples)
-                if i % self.args.get('save_examples_freq', 5) == 0: # Save examples every few iterations
+                if i % self.args.get('save_examples_freq', 5) == 0: 
                     self.save_train_examples(i)
             else:
                 print("Skipping self-play for the first iteration as per config.")
@@ -154,38 +148,36 @@ class Coach():
                 continue
 
             print("Starting Training Phase...")
-            # Save current nnet (which is the best nnet so far) to pnet
-            # This effectively makes pnet the model from the start of this iteration
             checkpoint_folder = self.args.get('checkpoint', './temp/')
             if not os.path.exists(checkpoint_folder):
                 os.makedirs(checkpoint_folder)
             
+            # Save current nnet (which is the best nnet so far) to pnet.weights.h5 to serve as the challenger
             self.nnet.save_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5')
+            # pnet loads these weights
             self.pnet.load_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5')
-            # pmcts = MCTS(self.game, self.pnet, self.args) # Not needed for player lambda def
-
+            
             train_data = list(self.train_examples_history)
             random.shuffle(train_data)
             
             print(f"Training nnet on {len(train_data)} examples...")
             self.nnet.train(train_data) # nnet is trained in-place
-
-            # nmcts = MCTS(self.game, self.nnet, self.args) # Not needed for player lambda def
-            # self.nnet.save_checkpoint(folder=checkpoint_folder, filename='nnet_temp.h5') 
+            self.mcts.set_nnet(self.nnet) # Update self-play MCTS with newly trained nnet
 
             print("Starting Arena Comparison Phase...")
             def nnet_player(board_state):
-                m = MCTS(self.game, self.nnet, self.args)
-                pi = m.getActionProb(board_state, temp=0)
+                self.mcts.set_nnet(self.nnet) # Use the new nnet
+                self.mcts.reset_search_state()
+                pi = self.mcts.getActionProb(board_state, temp=0)
                 return np.argmax(pi)
 
             def pnet_player(board_state):
-                m = MCTS(self.game, self.pnet, self.args)
-                pi = m.getActionProb(board_state, temp=0)
+                self.mcts.set_nnet(self.pnet) # Use the challenger pnet
+                self.mcts.reset_search_state()
+                pi = self.mcts.getActionProb(board_state, temp=0)
                 return np.argmax(pi)
             
-            # display_fn = self.game.display if hasattr(self.game, 'display') else None
-            display_fn = None 
+            display_fn = self.game.display if hasattr(self.game, 'display') else None
 
             arena = Arena(nnet_player, pnet_player, self.game, display=display_fn)
             arena_compare_games = self.args.get('arena_compare', 20)
@@ -194,26 +186,26 @@ class Coach():
             print(f"ARENA RESULTS: NewNet wins: {n_wins}, PrevNet wins: {p_wins}, Draws: {draws}")
 
             total_played = n_wins + p_wins
-            if total_played == 0: # Avoid division by zero if all games are draws
+            if total_played == 0: 
                 win_rate = 0
             else:
                 win_rate = float(n_wins) / total_played
 
-            if win_rate > self.args.get('update_threshold', 0.55):
+            if win_rate >= self.args.get('update_threshold', 0.50):
                 print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
                 self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.weights.h5')
+                # self.mcts.set_nnet(self.nnet) already done after training
             else:
                 print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
-                self.nnet.load_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5') # MODIFIED - Revert to pnet weights (previous best for this iter)
+                self.nnet.load_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5') 
+                self.mcts.set_nnet(self.nnet) # Update MCTS with the reverted nnet
             print("------------------------")
 
     def save_train_examples(self, iteration):
         folder = self.args.get('checkpoint', './temp/')
         if not os.path.exists(folder):
             os.makedirs(folder)
-        # Save the whole deque
         filename = os.path.join(folder, "train_examples_history.pkl") 
-        # filename_iter = os.path.join(folder, f"train_examples_iter_{iteration}.pkl") # Optionally save per iteration
         import pickle
         try:
             with open(filename, "wb+") as f:
@@ -222,22 +214,18 @@ class Coach():
         except Exception as e:
             print(f"Error saving training examples: {e}")
 
-    def load_train_examples(self, iteration=None): # iteration arg not used currently for general load
+    def load_train_examples(self, iteration=None): 
         folder = self.args.get('checkpoint', './temp/')
         example_file = os.path.join(folder, "train_examples_history.pkl")
-        # if iteration is not None:
-        #     example_file = os.path.join(folder, f"train_examples_iter_{iteration}.pkl")
         
         if os.path.exists(example_file):
             import pickle
             try:
                 with open(example_file, "rb") as f:
                     loaded_deque = pickle.load(f)
-                    # Ensure it's a deque with the correct maxlen from args
                     if not isinstance(loaded_deque, deque):
                         print("Warning: Loaded examples not a deque, converting.")
                         return deque(list(loaded_deque), maxlen=self.args.get('max_len_of_queue', 20000))
-                    # If maxlen changed in args, re-create deque
                     if loaded_deque.maxlen != self.args.get('max_len_of_queue', 20000):
                         print("Warning: Maxlen of loaded deque differs from args. Re-creating deque.")
                         return deque(list(loaded_deque), maxlen=self.args.get('max_len_of_queue', 20000))

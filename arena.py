@@ -52,7 +52,7 @@ class Arena():
                 # For robustness, could assign a loss to the current player or end game.
                 assert valids[action] > 0
             
-            board, current_player_idx = self.game.get_next_state(board, current_player_idx, action)
+            board, current_player_idx, _ = self.game.get_next_state(board, current_player_idx, action) # Ignore move_row
         
         if verbose:
             assert self.display

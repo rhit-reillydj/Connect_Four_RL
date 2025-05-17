@@ -29,6 +29,26 @@ class MCTS():
         self.Es = {}   # Stores game_ended_value for board s (1, -1, 1e-4, or 0)
         self.Vs = {}   # Stores valid_moves for board s
 
+    def set_nnet(self, nnet):
+        """
+        Set the neural network for the MCTS.
+        Args:
+            nnet: The neural network instance.
+        """
+        self.nnet = nnet
+
+    def reset_search_state(self):
+        """
+        Reset the internal search state (Q, N, P, E, V dictionaries).
+        This should be called before starting a new search for a new root node (e.g., for a new move).
+        """
+        self.Qsa = {}
+        self.Nsa = {}
+        self.Ns = {}
+        self.Ps = {}
+        self.Es = {}
+        self.Vs = {}
+
     def getActionProb(self, canonical_board, temp=1):
         """
         Performs num_mcts_sims simulations starting from canonical_board to get action probabilities.
@@ -40,8 +60,9 @@ class MCTS():
         Returns:
             list: A policy vector where the probability of an action is proportional to Nsa[(s,a)]**(1./temp).
         """
-        for _ in range(self.args.get('num_mcts_sims', 50)):
-            self.search(canonical_board)
+        num_sims = self.args.get('num_mcts_sims', 50)
+        for i in range(num_sims):
+            self.search(canonical_board, is_root_node=(i == 0)) # Pass is_root_node=True only for the first simulation
 
         s = self.game.string_representation(canonical_board)
         counts = [self.Nsa.get((s, a), 0) for a in range(self.game.get_action_size())]
@@ -67,11 +88,12 @@ class MCTS():
         probs = [x / counts_sum for x in counts]
         return probs
 
-    def search(self, canonical_board):
+    def search(self, canonical_board, is_root_node=False):
         """
         Performs one MCTS simulation: selection, expansion, simulation (via nnet), and backpropagation.
         Args:
             canonical_board (np.ndarray): The board state from the perspective of the current player.
+            is_root_node (bool): True if this is the root of the current MCTS search for a move decision.
         Returns:
             float: The negative of the value of the current board state from the perspective of the current player.
                    (i.e., the value from the perspective of the opponent if it were their turn next from this state).
@@ -84,7 +106,9 @@ class MCTS():
 
         # Check if game ended (leaf node)
         if s not in self.Es:
-            self.Es[s] = self.game.get_game_ended(canonical_board, 1) # 1 is the current player for canonical_board
+            # Pass current player (1 for canonical) and last move info if available/needed by game
+            # For generic MCTS, assuming get_game_ended can work with just board and current player perspective
+            self.Es[s] = self.game.get_game_ended(canonical_board, 1) 
         if self.Es[s] != 0: # Game ended
             return -self.Es[s] # Return value from opponent's perspective
 
@@ -92,6 +116,14 @@ class MCTS():
         if s not in self.Ps:
             # Predict policy and value using the neural network
             policy, v = self.nnet.predict(canonical_board)
+
+            if is_root_node and self.args.get('add_dirichlet_noise', False):
+                alpha = self.args.get('dirichlet_alpha', 0.3)
+                epsilon = self.args.get('epsilon_noise', 0.25)
+                noise = np.random.dirichlet([alpha] * self.game.get_action_size())
+                policy = (1 - epsilon) * np.array(policy).flatten() + epsilon * noise
+                # Ensure policy is a flat array if it wasn't already from predict()
+
             self.Ps[s] = policy
             valids = self.game.get_valid_moves(canonical_board)
             self.Ps[s] = self.Ps[s] * valids  # Mask invalid moves
@@ -99,17 +131,18 @@ class MCTS():
             if sum_Ps_s > 0:
                 self.Ps[s] /= sum_Ps_s  # Renormalize
             else:
-                # This can happen if all valid moves have 0 probability from NNet.
+                # This can happen if all valid moves have 0 probability from NNet (even after noise).
                 # Or if there are no valid moves (terminal state, should have been caught by Es[s] != 0)
-                print("Warning: All valid moves were masked, re-normalizing Ps to uniform.")
-                self.Ps[s] = self.Ps[s] + valids # Add back valids
-                self.Ps[s] /= np.sum(self.Ps[s]) # Renormalize
-                if np.sum(self.Ps[s]) == 0: # Still zero, means no valid moves
-                     # This should ideally not be reached if Es[s] check is correct for terminal states.
-                    print("Error: No valid moves and not a terminal state identified by Es[s].")
-                    # Consider this a draw or some other defined outcome if it happens.
-                    # For safety, return 0, but this indicates an issue.
-                    self.Es[s] = 1e-7 # Arbitrary small value to mark error/unexpected state
+                print("Warning: All valid moves were masked after policy calculation (including noise), re-normalizing Ps to uniform over valids.")
+                # Log the state or policy for debugging if this happens often.
+                self.Ps[s] = valids # Fallback to uniform distribution over valid moves
+                sum_Ps_s = np.sum(self.Ps[s])
+                if sum_Ps_s > 0:
+                    self.Ps[s] /= sum_Ps_s
+                else:
+                    # This case implies no valid moves, but Es[s] was 0. This is problematic.
+                    print("Error: No valid moves and not a terminal state identified by Es[s], even after fallback in Ps calculation.")
+                    self.Es[s] = 1e-7 # Mark as an error state / draw
                     return -self.Es[s]
 
             self.Vs[s] = valids
@@ -143,10 +176,11 @@ class MCTS():
             # For now, let's assume a draw if no action can be chosen.
             return 0 
 
-        next_s_board, next_player = self.game.get_next_state(canonical_board, 1, a) # player=1 for canonical_board
+        # next_s_board, next_player = self.game.get_next_state(canonical_board, 1, a) # player=1 for canonical_board, ignore move_row
+        next_s_board, next_player, _ = self.game.get_next_state(canonical_board, 1, a) # player=1 for canonical_board, ignore move_row
         next_s_canonical = self.game.get_canonical_form(next_s_board, next_player)
         
-        v = self.search(next_s_canonical) # Recursive call
+        v = self.search(next_s_canonical, is_root_node=False) # Recursive call
 
         # Backpropagation
         # Update Qsa and Nsa for the (s,a) pair

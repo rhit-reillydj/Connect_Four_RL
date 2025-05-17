@@ -46,15 +46,18 @@ class ConnectFourGame:
         """
         if board[0, action] != 0: # Column is full
             # This case should ideally be prevented by checking valid moves first
-            return board, player 
+            # If it happens, return current board, player, and an invalid row indicator like -1
+            return board, player, -1
 
         b = np.copy(board)
+        move_row = -1
         for r in range(self.rows - 1, -1, -1): # Iterate from bottom row upwards
             if b[r, action] == 0:
                 b[r, action] = player
+                move_row = r
                 break
         next_player = -player
-        return b, next_player
+        return b, next_player, move_row
 
     def get_valid_moves(self, board):
         """
@@ -70,81 +73,126 @@ class ConnectFourGame:
                 valid_moves[c] = 1
         return valid_moves
 
-    def _has_won(self, board, player, last_move_col=None):
+    def _has_won(self, board, player, last_move_col=None, last_move_row=None):
         """
         Check if the given player has won. 
-        If last_move_col is provided, it can optimize by checking around the last move.
-        For now, it checks the entire board.
+        If last_move_col and last_move_row are provided, it optimizes by checking around the last move.
+        Otherwise, it checks the entire board.
         Args:
             board (np.ndarray): The current board state.
             player (int): The player to check for a win (1 or -1).
-            last_move_col (int, optional): The column of the last move. Defaults to None.
+            last_move_col (int, optional): The column of the last move.
+            last_move_row (int, optional): The row of the last move.
         Returns:
             bool: True if the player has won, False otherwise.
         """
-        # Find the row of the last move if last_move_col is provided
-        last_move_row = -1
-        if last_move_col is not None:
-            for r in range(self.rows):
-                if board[r, last_move_col] == player:
-                    last_move_row = r
-                    break
-            # If the column is somehow empty for this player, something is wrong
-            # or it's called in a state where last_move_col isn't actually that player's last move.
-            # Fallback to full board check or handle error. For now, proceed. 
-            if last_move_row == -1 and board[self.rows-1, last_move_col] != 0 : # if column is full and not player, this is an issue
-                 pass # Let full board check handle it or refine this logic
+        if last_move_col is None or last_move_row is None or last_move_row == -1: # Fallback to full board check
+            # Check horizontal wins (full board)
+            for r_idx in range(self.rows):
+                for c_idx in range(self.cols - self.win_length + 1):
+                    if np.all(board[r_idx, c_idx:c_idx+self.win_length] == player):
+                        return True
+            # Check vertical wins (full board)
+            for c_idx in range(self.cols):
+                for r_idx in range(self.rows - self.win_length + 1):
+                    if np.all(board[r_idx:r_idx+self.win_length, c_idx] == player):
+                        return True
+            # Check positively sloped diagonals (full board)
+            for r_idx in range(self.rows - self.win_length + 1):
+                for c_idx in range(self.cols - self.win_length + 1):
+                    if np.all([board[r_idx+i, c_idx+i] == player for i in range(self.win_length)]):
+                        return True
+            # Check negatively sloped diagonals (full board)
+            for r_idx in range(self.win_length - 1, self.rows):
+                for c_idx in range(self.cols - self.win_length + 1):
+                    if np.all([board[r_idx-i, c_idx+i] == player for i in range(self.win_length)]):
+                        return True
+            return False
 
-        # Check horizontal wins
-        for r in range(self.rows):
-            for c in range(self.cols - self.win_length + 1):
-                if np.all(board[r, c:c+self.win_length] == player):
+        # Optimized check around (last_move_row, last_move_col)
+        r_move, c_move = last_move_row, last_move_col
+        W = self.win_length
+
+        # Horizontal check: Iterate through W possible start positions for a win
+        for c_start in range(c_move - W + 1, c_move + 1):
+            if 0 <= c_start <= self.cols - W:
+                if np.all(board[r_move, c_start : c_start + W] == player):
                     return True
 
-        # Check vertical wins
-        for c in range(self.cols):
-            for r in range(self.rows - self.win_length + 1):
-                if np.all(board[r:r+self.win_length, c] == player):
+        # Vertical check: Iterate through W possible start positions for a win
+        for r_start in range(r_move - W + 1, r_move + 1):
+            if 0 <= r_start <= self.rows - W:
+                if np.all(board[r_start : r_start + W, c_move] == player):
                     return True
 
-        # Check positively sloped diagonals (e.g., bottom-left to top-right)
-        for r in range(self.rows - self.win_length + 1):
-            for c in range(self.cols - self.win_length + 1):
-                if np.all([board[r+i, c+i] == player for i in range(self.win_length)]):
+        # Positively sloped diagonal (/) : Iterate through W possible start positions
+        # (row and col both increase or both decrease from start_diag to end_diag)
+        for i in range(W):
+            r_start, c_start = r_move - i, c_move - i
+            if (0 <= r_start <= self.rows - W) and \
+               (0 <= c_start <= self.cols - W):
+                if all(board[r_start + k, c_start + k] == player for k in range(W)):
                     return True
 
-        # Check negatively sloped diagonals (e.g., top-left to bottom-right)
-        for r in range(self.win_length - 1, self.rows):
-            for c in range(self.cols - self.win_length + 1):
-                if np.all([board[r-i, c+i] == player for i in range(self.win_length)]):
+        # Negatively sloped diagonal (\\) : Iterate through W possible start positions
+        # Elements are (r_start+k, c_start-k) for k in 0..W-1
+        for i in range(W):
+            r_start = r_move - i
+            c_start = c_move + i
+            # (r_start, c_start) is the top-rightmost point of a potential win \
+            # if (r_move,c_move) is the i-th element from this top-right point\
+            # Check bounds for the entire diagonal segment starting from (r_start, c_start)\
+            # Start of segment: (r_start, c_start)\
+            # End of segment: (r_start + W - 1, c_start - (W - 1))\
+            condition_row_bounds = (0 <= r_start <= self.rows - W)
+            condition_col_bounds = (W - 1 <= c_start < self.cols)
+
+            if condition_row_bounds and condition_col_bounds:\
+                # Col check for start (c_start) and full length left (c_start - W + 1 >=0)\
+                if all(board[r_start + k, c_start - k] == player for k in range(W)):\
                     return True
-        
         return False
 
-    def get_game_ended(self, board, player):
+    def get_game_ended(self, board, player, last_move_col=None, last_move_row=None):
         """
         Check if the game has ended.
         Args:
             board (np.ndarray): The current board state.
             player (int): The player who just made a move or whose turn it is.
                          The win is checked for this player.
+            last_move_col (int, optional): The column of the last move. For optimized check.
+            last_move_row (int, optional): The row of the last move. For optimized check.
         Returns:
             float: 1 if `player` won, -1 if `player` lost (opponent won),
                    a small positive float (e.g., 1e-4) for a draw, 
                    0 if the game is ongoing.
         """
-        # last_move_col = None # For now, _has_won checks the whole board
-        # If we want to optimize, we'd need to know the actual last move's column.
-        # The `player` argument here is the one whose perspective we evaluate the win from.
+        # If last move info is provided, use it for optimized win check
+        if last_move_col is not None and last_move_row is not None:
+            if self._has_won(board, player, last_move_col, last_move_row):
+                return 1
+            if self._has_won(board, -player, last_move_col, last_move_row): # Check opponent win based on this last move
+                 # This scenario (opponent winning immediately after player's move) should not occur 
+                 # if player's move was valid and _has_won is called for the player who just moved.
+                 # However, keeping it for robustness, or if context of call changes.
+                 # For connect four, opponent cannot win on your move.
+                 pass # Opponent cannot win on player's move if game rules are standard
+        else: # Fallback to full board check if last move info not available
+            if self._has_won(board, player): # Check win for current player (who made the last move)
+                return 1
+            # No need to check opponent win with full board scan here, as they couldn't have won on player's move.
 
-        if self._has_won(board, player):
-            return 1
-        if self._has_won(board, -player): # Check if opponent has won
+        # Check if opponent would have won BEFORE player's current move (this check is tricky here)
+        # This is more about checking if the *previous* state led to an opponent win.
+        # For the current structure, get_game_ended is called *after* a move for player.
+        # So, we check if player won. Then we check if opponent *now* has a win (should be impossible). 
+        # The original code had: if self._has_won(board, -player): return -1. This meant if the current board state
+        # shows the opponent has won, player loses. This is fine.
+        if self._has_won(board, -player): # If opponent has a winning line on the board now
             return -1
         
-        # Check for draw: if no empty spots left and no one has won
-        if not np.any(board == 0):
-            return 1e-4 # Small value for draw
+        if not np.any(board == 0): # Check for draw: if no empty spots left and no one has won
+            return 1e-4 
             
         return 0 # Game is ongoing
 
@@ -196,3 +244,27 @@ class ConnectFourGame:
             str: A string representation of the board.
         """
         return board.tobytes() 
+
+    def display(self, board):
+        """
+        Displays the board in a human-readable format.
+        X for player 1, O for player -1 (or computer), . for empty.
+        Args:
+            board (np.ndarray): The current board state.
+        """
+        print(" -----------------------") # Top border
+        for r in range(self.rows):
+            row_str = "| "
+            for c in range(self.cols):
+                if board[r, c] == 1:
+                    row_str += "X "
+                elif board[r, c] == -1:
+                    row_str += "O "
+                else:
+                    row_str += ". "
+            print(row_str + "|")
+        print(" -----------------------") # Bottom border
+        # Print column numbers for easier play/debug
+        col_nums = "| " + " ".join(map(str, range(self.cols))) + " |"
+        print(col_nums)
+        print("") # Extra newline for spacing 
