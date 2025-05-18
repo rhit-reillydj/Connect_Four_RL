@@ -257,7 +257,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- Main App Title ---
-st.title("Dominic Reilly's AlphaFour Challenge!")
+st.title("Dominic Reilly's AlphaFour Model!")
 
 # --- Error handling for game initialization ---
 if st.session_state.get('error_message'):
