@@ -9,6 +9,12 @@ from model import ConnectFourNNet
 from mcts import MCTS
 from utils import dotdict
 
+# --- New Constants for Interactive Training ---
+INTERACTIVE_MODEL_FILENAME = 'best.weights.h5'
+INTERACTIVE_TRAINING_LR = 0.005  # Higher learning rate for interactive training
+MAX_INTERACTIVE_TRAIN_EXAMPLES_PER_GAME = 100 # Cap on examples collected per game
+ENABLE_INTERACTIVE_LEARNING = False # Flag to control interactive learning
+
 # --- Constants ---
 SQUARESIZE = 100
 RADIUS = int(SQUARESIZE * 0.4) # Slightly smaller radius for better padding
@@ -23,6 +29,9 @@ HOVER_ALPHA = 128 # Alpha for hover piece
 
 PLAYER_PIECE = 1
 AI_PIECE = -1
+
+# Global list to store training examples from the current game session
+current_game_training_examples = []
 
 # --- Pygame Helper Functions ---
 def draw_board_slots_background(screen, game_rows, game_cols):
@@ -96,27 +105,47 @@ def display_message(screen, message, game_cols, font_size=35, color=MESSAGE_TEXT
 
 # --- Main Game Function ---
 def play_game_with_ui():
+    global current_game_training_examples # Allow modification of the global list
+    current_game_training_examples = [] # Reset for each new game instance played through the UI
+
     game = ConnectFourGame()
     board_rows, board_cols = game.get_board_size()
-
     ai_args = dotdict({
         'cpuct': 1.0,
-        'num_mcts_sims': 50, 
-        'lr': 0.001, 'epochs': 1, 'batch_size': 32
+        'num_mcts_sims': 50,
+        'lr': 0.001, 'epochs': 1, 'batch_size': 32,
+        'tempThreshold': 15, # Example, assuming MCTS might use this for temp calculation
+        'temp': 1.0 # Default temperature for MCTS policy calculation for training
     })
 
     print("Loading AI model...")
-    nnet = ConnectFourNNet(game, ai_args)
-    model_folder = './temp_connect_four/' 
-    model_filename = 'best.weights.h5'
+    nnet = ConnectFourNNet(game, ai_args) # Initialize with standard args
+    model_folder = './temp_connect_four/'
+    interactive_model_path = os.path.join(model_folder, INTERACTIVE_MODEL_FILENAME)
+    best_model_path = os.path.join(model_folder, 'best.weights.h5')
+
+    model_loaded = False
+    if os.path.exists(interactive_model_path):
+        try:
+            nnet.load_checkpoint(folder=model_folder, filename=INTERACTIVE_MODEL_FILENAME)
+            print(f"Loaded interactive model: {interactive_model_path}")
+            model_loaded = True
+        except Exception as e:
+            print(f"Error loading interactive model {INTERACTIVE_MODEL_FILENAME}: {e}. Trying {best_model_path}.")
     
-    if os.path.exists(os.path.join(model_folder, model_filename)):
-        nnet.load_checkpoint(folder=model_folder, filename=model_filename)
-        print(f"Model {model_filename} loaded.")
-    else:
-        print(f"Model {model_filename} not found. AI cannot play.")
+    if not model_loaded and os.path.exists(best_model_path):
+        try:
+            nnet.load_checkpoint(folder=model_folder, filename='best.weights.h5')
+            print(f"Loaded base model: {best_model_path}")
+            model_loaded = True
+        except Exception as e:
+            print(f"Error loading base model {best_model_path}: {e}.")
+
+    if not model_loaded:
+        print(f"No suitable model found in {model_folder}. AI cannot play without a model.")
         return
-    ai_mcts = MCTS(game, nnet, ai_args)
+
+    ai_mcts = MCTS(game, nnet, ai_args) # MCTS uses the nnet with its original args for sims
 
     pygame.init()
     pygame.font.init() # Initialize font module
@@ -190,10 +219,18 @@ def play_game_with_ui():
             pygame.display.flip()
 
             canonical_board_ai = game.get_canonical_form(board_state, AI_PIECE)
-            ai_policy = ai_mcts.getActionProb(canonical_board_ai, temp=0)
-            ai_action = np.argmax(ai_policy)
+            # Use temp=1 for MCTS policy for training examples (encourages exploration in target policy)
+            ai_target_policy_for_training = ai_mcts.getActionProb(canonical_board_ai, temp=ai_args.temp)
+            
+            # The actual move can be based on this policy (argmax) or a temp=0 policy for exploitation
+            ai_action = np.argmax(ai_target_policy_for_training)
 
             if game.get_valid_moves(board_state)[ai_action]:
+                # Store training example if cap not reached
+                if len(current_game_training_examples) < MAX_INTERACTIVE_TRAIN_EXAMPLES_PER_GAME:
+                    # Store: (canonical_board_from_AI_perspective, target_policy_from_AI_perspective, placeholder_for_value)
+                    current_game_training_examples.append([canonical_board_ai, ai_target_policy_for_training, 0])
+
                 is_animating = True
                 animating_piece_player = AI_PIECE
                 animating_piece_col = ai_action
@@ -205,7 +242,7 @@ def play_game_with_ui():
                 print(f"AI chose column: {ai_action}")
             else:
                 # AI Error Handling (Simplified)
-                print(f"Error: AI chose an invalid move: {ai_action}. Policy: {ai_policy}")
+                print(f"Error: AI chose an invalid move: {ai_action}. Policy: {ai_target_policy_for_training}")
                 # Let human play again or pick random for AI
                 human_can_move = True 
                 turn = PLAYER_PIECE # Or handle AI error more gracefully
@@ -221,14 +258,58 @@ def play_game_with_ui():
                 board_state[target_row_for_animation][animating_piece_col] = animating_piece_player
                 
                 # Check game end state after piece lands
+                # result is from the perspective of animating_piece_player
                 result = game.get_game_ended(board_state, animating_piece_player)
-                if result == 1:
-                    game_over = True
-                elif result == -1: # Opponent won - this should not happen from current player perspective
-                    game_over = True # Should be caught by a win for the other player
-                elif result == 1e-4:
-                    game_over = True 
                 
+                if result != 0: # Game has ended
+                    game_over = True
+                    winner_is = 0 # 0 for draw, PLAYER_PIECE or AI_PIECE for winner
+                    if result == 1: # animating_piece_player won
+                        winner_is = animating_piece_player
+                    elif result == -1: # animating_piece_player lost (so opponent won)
+                        winner_is = -animating_piece_player
+                    elif result == 1e-4: # Draw
+                        winner_is = 0 
+                    
+                    # --- Interactive Training Logic ---
+                    if current_game_training_examples:
+                        final_examples_for_training = []
+                        # Assign game outcome to all collected examples
+                        for ex_board_canon, ex_policy, _ in current_game_training_examples:
+                            # ex_board_canon is from AI's perspective (player 1 in that context)
+                            # Value is +1 if AI won, -1 if AI lost, 0 (or 1e-4) for draw
+                            value_for_ai_perspective = 0
+                            if winner_is == AI_PIECE:
+                                value_for_ai_perspective = 1
+                            elif winner_is == PLAYER_PIECE:
+                                value_for_ai_perspective = -1
+                            elif winner_is == 0: # Draw
+                                value_for_ai_perspective = 1e-4 # Small value for draw often used
+                            
+                            final_examples_for_training.append((ex_board_canon, ex_policy, value_for_ai_perspective))
+                        
+                        if final_examples_for_training and ENABLE_INTERACTIVE_LEARNING:
+                            print(f"--- Training AI on {len(final_examples_for_training)} examples from the last game ---")
+                            
+                            # Temporarily set a higher learning rate for this training session
+                            original_nnet_lr = nnet.args.lr
+                            nnet.args.lr = INTERACTIVE_TRAINING_LR
+                            print(f"Using temporary learning rate for interactive training: {nnet.args.lr}")
+                            
+                            # Assuming nnet.train() uses nnet.args.epochs and nnet.args.batch_size
+                            # And that nnet.train() will pick up the changed nnet.args.lr
+                            # If nnet.train() takes epochs/batch_size as direct params, adjust call accordingly
+                            nnet.train(final_examples_for_training)
+                            
+                            nnet.args.lr = original_nnet_lr # Restore original learning rate
+                            print(f"Restored learning rate to: {nnet.args.lr}")
+
+                            nnet.save_checkpoint(folder=model_folder, filename=INTERACTIVE_MODEL_FILENAME)
+                            print(f"Saved interactively trained model to: {os.path.join(model_folder, INTERACTIVE_MODEL_FILENAME)}")
+                            
+                        current_game_training_examples = [] # Clear examples after training for this game session
+                    # --- End Interactive Training Logic ---
+
                 if not game_over:
                     turn = -animating_piece_player # Switch turn
                     if turn == PLAYER_PIECE:
@@ -255,15 +336,29 @@ def play_game_with_ui():
         # 5. Display current message
         if game_over:
             winner_player = animating_piece_player # The player who made the last move
-            if game.get_game_ended(board_state, winner_player) == 1:
-                msg = "You Win! (Red)" if winner_player == PLAYER_PIECE else "AI Wins! (Yellow)"
-            elif game.get_game_ended(board_state, winner_player) == 1e-4:
+            # Determine true winner based on game state, not just last player.
+            # game.get_game_ended is from perspective of its second arg.
+            # Let's re-evaluate based on a fixed perspective or use the 'winner_is' var if available.
+            # The 'winner_is' variable calculated above is more reliable here.
+            
+            current_winner_for_message = 0 # Default to draw message
+            # Need to get winner_is if it was set (it's set if result != 0)
+            # This block is inside "if game_over", which means result !=0 was true.
+            # So, 'winner_is' should be defined from the training block if training happened.
+            # If training didn't happen (no examples), we still need to determine winner.
+            # Let's re-determine winner here for message clarity if winner_is isn't in scope or for safety.
+            
+            final_board_check_player = PLAYER_PIECE # Check from Player's perspective for message
+            final_result = game.get_game_ended(board_state, final_board_check_player)
+
+            if final_result == 1: # Player wins
+                msg = "You Win! (Red)"
+            elif final_result == -1: # AI wins (Player lost)
+                msg = "AI Wins! (Yellow)"
+            elif final_result == 1e-4: # Draw
                 msg = "It's a Draw!"
-            else: # Should mean opponent won, check with -winner_player
-                 if game.get_game_ended(board_state, -winner_player) == 1:
-                    msg = "AI Wins! (Yellow)" if -winner_player == AI_PIECE else "You Win! (Red)"
-                 else:
-                    msg = "Game Over! Press R to Restart"
+            else: # Should not happen if game_over is true
+                msg = "Game Over! Press R to Restart" # Generic message
             display_message(screen, msg, board_cols, font_size=38)
         elif is_animating:
             msg = "Piece Falling..."

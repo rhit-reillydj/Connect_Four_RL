@@ -41,7 +41,6 @@ class Coach():
         self.args = args
         self.mcts = MCTS(self.game, self.nnet, self.args) # Reusable MCTS instance
         self.train_examples_history = deque([], maxlen=self.args.get('max_len_of_queue', 20000))
-        self.skip_first_self_play = False
 
         if self.args.get('load_model', False):
             load_folder, load_file = self.args.get('load_folder_file', ('checkpoint', 'best.weights.h5'))
@@ -54,7 +53,6 @@ class Coach():
                 if loaded_hist:
                     self.train_examples_history = loaded_hist
                     print(f"Loaded {len(self.train_examples_history)} training examples.")
-                self.skip_first_self_play = True 
             else:
                 print(f"No model found at {model_file}, starting from scratch.")
         else:
@@ -124,24 +122,21 @@ class Coach():
     def learn(self):
         for i in range(1, self.args.get('num_iters', 100) + 1):
             print(f'------ ITERATION {i} ------')
-            if not self.skip_first_self_play or i > 1:
-                print("Starting Self-Play Phase...")
-                iteration_train_examples = deque([])
-                num_eps_to_run = self.args.get('num_eps', 50)
-                for eps in range(num_eps_to_run):
-                    start_time = time.time()
-                    # self.mcts.set_nnet(self.nnet) # Already set at start of execute_episode or after training
-                    new_examples = self.execute_episode()
-                    if new_examples: 
-                        iteration_train_examples.extend(new_examples)
-                    print(f"Self-Play Episode {eps+1}/{num_eps_to_run} completed in {time.time()-start_time:.2f}s. Examples: {len(new_examples if new_examples else [])}")
-                
-                self.train_examples_history.extend(iteration_train_examples)
-                if i % self.args.get('save_examples_freq', 5) == 0: 
-                    self.save_train_examples(i)
-            else:
-                print("Skipping self-play for the first iteration as per config.")
-                self.skip_first_self_play = False
+            print("Starting Self-Play Phase...")
+            iteration_train_examples = deque([])
+            num_eps_to_run = self.args.get('num_eps', 50)
+            for eps in range(num_eps_to_run):
+                start_time = time.time()
+                # self.mcts.set_nnet(self.nnet) # Already set at start of execute_episode or after training
+                new_examples = self.execute_episode()
+                if new_examples: 
+                    iteration_train_examples.extend(new_examples)
+                print(f"Self-Play Episode {eps+1}/{num_eps_to_run} completed in {time.time()-start_time:.2f}s. Examples: {len(new_examples if new_examples else [])}")
+            
+            self.train_examples_history.extend(iteration_train_examples)
+            if i % self.args.get('save_examples_freq', 5) == 0: 
+                self.save_train_examples(i)
+            
 
             if not self.train_examples_history:
                 print("No training examples available. Skipping training and arena phase.")
