@@ -45,7 +45,7 @@ def get_player_color_html(piece):
     if piece == AI_PIECE: return YELLOW_AI_HTML
     return "transparent"
 
-def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, current_turn_player):
+def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, current_turn_player, last_move_coords=None):
     rows, cols = board_array.shape # game_cols is cols from the board
 
     # action_row width is now fit-content, grid-template-columns defines its structure
@@ -69,11 +69,15 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
     for r in range(rows):
         for c_idx in range(cols):
             piece_color = get_player_color_html(board_array[r][c_idx])
+            piece_extra_class = ""
+            if last_move_coords and r == last_move_coords[0] and c_idx == last_move_coords[1]:
+                piece_extra_class = " last-move-highlight"
+            
             # .board-cell, .board-hole, .piece will primarily use CSS variables for sizing in their inline styles
             cell_html = (
                 f"<div class='board-cell' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
                 f"<div class='board-hole' style='width: calc(var(--radius) * 2); height: calc(var(--radius) * 2); background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
-                f"<div class='piece' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);\'></div>"
+                f"<div class='piece{piece_extra_class}' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease, box-shadow 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
                 f"</div></div>"
             )
             html_board_pieces += cell_html
@@ -126,6 +130,7 @@ def initialize_game_state():
         st.session_state.ai_thinking = False
         st.session_state.error_message = None
         st.session_state.game_ready = True
+        st.session_state.last_move_coords = None
     st.session_state.game_restarted = False
 
 # --- New Helper Functions for Game Over Displays ---
@@ -197,6 +202,7 @@ if clicked_action_data is not None:
                 print(f"DEBUG bridge: Move in col {action_col} is valid. Getting next state.")
                 new_board, _, move_row = game_instance.get_next_state(current_board, player_piece_val, action_col)
                 st.session_state.board = new_board
+                st.session_state.last_move_coords = (move_row, action_col)
                 game_end_result = game_instance.get_game_ended(st.session_state.board, player_piece_val, last_move_col=action_col, last_move_row=move_row)
                 if game_end_result != 0:
                     st.session_state.game_over = True
@@ -360,10 +366,17 @@ st.markdown(f"""
 
     /* board-cell, board-hole, piece styles will use CSS vars in draw_board_html */
     
-    .stButton[data-testid*=\"restart_game_main_btn\"]>button {{ 
+    .piece.last-move-highlight {
+        /* Glowing effect for the last moved piece */
+        box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3), 0 0 5px 3px #ffffff, 0 0 12px 6px rgba(255, 255, 255, 0.7);
+        /* Ensure the highlight is on top if pieces ever overlap (they shouldn't in Connect4 but good practice) */
+        z-index: 2; 
+    }
+
+    .stButton[data-testid*="restart_game_main_btn"]>button {{ 
         /* These styles are for the old Streamlit button, not the new overlay button */
     }}
-    .stButton[data-testid*=\"restart_game_main_btn\"]>button:hover:not(:disabled) {{ 
+    .stButton[data-testid*="restart_game_main_btn"]>button:hover:not(:disabled) {{ 
         /* These styles are for the old Streamlit button, not the new overlay button */
     }}
     /* Responsive Footer */
@@ -437,7 +450,10 @@ st.markdown(f"""
 
     /* Loss Devastation Styles - Responsive Text */
     #loss-overlay {{
-        background: linear-gradient(45deg, rgba(50,0,0,0.9), rgba(100,0,0,0.95));
+        background: linear-gradient(45deg, rgba(50,0,0,0.7), rgba(100,0,0,0.8));
+    }}
+    #loss-overlay .overlay-content {{
+        background-color: rgba(0,0,0,0.6); 
     }}
     .loss-title {{
         font-family: 'Press Start 2P', cursive;
@@ -552,7 +568,7 @@ if not game_over:
 # Always display the board and action row if game is ready, so player can see final state
 if st.session_state.get("game_ready", False):
     valid_moves = game.get_valid_moves(board) 
-    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn) # Pass game_over
+    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords')) # Pass game_over and last_move_coords
     html(board_html_content)
 
 # --- AI's Turn Logic ---
@@ -581,6 +597,7 @@ if not game_over and turn == AI_PIECE and ai_thinking:
 
         new_board, _, ai_move_row = game.get_next_state(board, AI_PIECE, ai_action)
         st.session_state.board = new_board
+        st.session_state.last_move_coords = (ai_move_row, ai_action)
         
         # Process game end after AI's move
         current_game_end_result = game.get_game_ended(st.session_state.board, AI_PIECE, last_move_col=ai_action, last_move_row=ai_move_row)
