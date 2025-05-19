@@ -10,7 +10,7 @@ from utils import dotdict # Assuming a utils.py for dotdict or use Namespace dir
 
 # Default arguments (can be overridden by command line or a config file)
 args = dotdict({
-    'num_iters': 10,          # Number of training iterations.
+    'num_iters': 30,          # Number of training iterations.
     'num_eps': 60,            # Number of self-play games to generate per iteration.
     'temp_threshold': 5,     # Number of moves after which temperature becomes 0 for action selection in self-play.
     'update_threshold': 0.50,   # Win rate threshold to accept new model in Arena.
@@ -25,7 +25,7 @@ args = dotdict({
 
     'checkpoint': './temp_connect_four/', # Folder to save checkpoints and examples.
     'load_model': True,       # Whether to load a saved model on startup.
-    'load_folder_file': ('./temp_connect_four/', 'best.weights.h5'), # MODIFIED - Tuple (folder, filename) for loading model.
+    'load_folder_file': ('./temp_connect_four/', 'best.keras'), # MODIFIED - Tuple (folder, filename) for loading model.
     'save_examples_freq': 1,  # Save training examples every N iterations.
 
     # Neural Network specific args
@@ -57,7 +57,7 @@ def main():
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # 0 = all, 1 = no INFO, 2 = no INFO/WARNING, 3 = no INFO/WARNING/ERROR
 
     print("Initializing game, neural network, and coach...")
-    print("Using arguments:", args)
+    # print("Using arguments:", args) # Removed for cleaner output
 
     game = ConnectFourGame() # Using default 6x7 board
     nnet = ConnectFourNNet(game, args)

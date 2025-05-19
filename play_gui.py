@@ -10,7 +10,7 @@ from mcts import MCTS
 from utils import dotdict
 
 # --- New Constants for Interactive Training ---
-INTERACTIVE_MODEL_FILENAME = 'best.weights.h5'
+INTERACTIVE_MODEL_FILENAME = 'best.keras' # Prioritize .keras full model
 INTERACTIVE_TRAINING_LR = 0.005  # Higher learning rate for interactive training
 MAX_INTERACTIVE_TRAIN_EXAMPLES_PER_GAME = 100 # Cap on examples collected per game
 ENABLE_INTERACTIVE_LEARNING = False # Flag to control interactive learning
@@ -121,25 +121,32 @@ def play_game_with_ui():
     print("Loading AI model...")
     nnet = ConnectFourNNet(game, ai_args) # Initialize with standard args
     model_folder = './temp_connect_four/'
-    interactive_model_path = os.path.join(model_folder, INTERACTIVE_MODEL_FILENAME)
-    best_model_path = os.path.join(model_folder, 'best.weights.h5')
+    
+    # Define preferred and fallback model names
+    preferred_model_filename = INTERACTIVE_MODEL_FILENAME # Should be 'best.keras'
+    fallback_weights_filename = 'best.weights.h5'
+
+    preferred_model_path = os.path.join(model_folder, preferred_model_filename)
+    fallback_weights_path = os.path.join(model_folder, fallback_weights_filename)
 
     model_loaded = False
-    if os.path.exists(interactive_model_path):
+    # Try loading the preferred full model first (.keras)
+    if os.path.exists(preferred_model_path):
         try:
-            nnet.load_checkpoint(folder=model_folder, filename=INTERACTIVE_MODEL_FILENAME)
-            print(f"Loaded interactive model: {interactive_model_path}")
+            nnet.load_checkpoint(folder=model_folder, filename=preferred_model_filename)
+            print(f"Loaded model: {preferred_model_path}")
             model_loaded = True
         except Exception as e:
-            print(f"Error loading interactive model {INTERACTIVE_MODEL_FILENAME}: {e}. Trying {best_model_path}.")
+            print(f"Error loading preferred model {preferred_model_filename}: {e}. Trying fallback {fallback_weights_filename}.")
     
-    if not model_loaded and os.path.exists(best_model_path):
+    # If preferred model not loaded, try fallback weights file (.h5)
+    if not model_loaded and os.path.exists(fallback_weights_path):
         try:
-            nnet.load_checkpoint(folder=model_folder, filename='best.weights.h5')
-            print(f"Loaded base model: {best_model_path}")
+            nnet.load_checkpoint(folder=model_folder, filename=fallback_weights_filename)
+            print(f"Loaded fallback weights: {fallback_weights_path}")
             model_loaded = True
         except Exception as e:
-            print(f"Error loading base model {best_model_path}: {e}.")
+            print(f"Error loading fallback weights {fallback_weights_filename}: {e}.")
 
     if not model_loaded:
         print(f"No suitable model found in {model_folder}. AI cannot play without a model.")

@@ -149,31 +149,51 @@ class ConnectFourNNet():
         
         return pi[0], v[0][0] # pi is (1, action_size), v is (1,1)
 
-    def save_checkpoint(self, folder='checkpoint', filename='checkpoint.h5'):
+    def save_checkpoint(self, folder='checkpoint', filename='checkpoint.keras'):
         """
-        Save the current model weights to a checkpoint file.
+        Save the current model (including architecture, weights, and optimizer state) to a file.
         Args:
             folder (str): The directory to save the checkpoint.
-            filename (str): The name of the checkpoint file (e.g., .h5 for Keras).
+            filename (str): The name of the checkpoint file (e.g., .keras).
         """
         import os
         if not os.path.exists(folder):
             os.makedirs(folder)
         filepath = os.path.join(folder, filename)
-        self.model.save_weights(filepath)
-        print(f"Checkpoint saved to {filepath}")
+        self.model.save(filepath)
+        print(f"Model checkpoint saved to {filepath}")
 
-    def load_checkpoint(self, folder='checkpoint', filename='checkpoint.h5'):
+    def load_checkpoint(self, folder='checkpoint', filename='checkpoint.keras'):
         """
-        Load model weights from a checkpoint file.
+        Load a model (including architecture, weights, and optimizer state) from a .keras file,
+        or just weights from a .h5 file.
         Args:
             folder (str): The directory where the checkpoint is saved.
-            filename (str): The name of the checkpoint file.
+            filename (str): The name of the checkpoint file (e.g., .keras or .h5).
         """
         import os
+        import tensorflow as tf 
         filepath = os.path.join(folder, filename)
         if os.path.exists(filepath):
-            self.model.load_weights(filepath)
-            print(f"Checkpoint loaded from {filepath}")
+            if filename.endswith('.keras'):
+                self.model = tf.keras.models.load_model(filepath)
+                print(f"Full model loaded from {filepath} (includes optimizer state).")
+            elif filename.endswith('.h5'): # For backward compatibility with .weights.h5
+                # Ensure model is built before loading weights if it hasn't been used yet.
+                # A simple predict call on a dummy input can build it.
+                # However, self.model.load_weights() should work if the model architecture is already defined.
+                try:
+                    self.model.load_weights(filepath)
+                    print(f"Model weights loaded from {filepath} (optimizer state not included).")
+                except Exception as e:
+                    print(f"Error loading weights from {filepath}: {e}")
+                    print("This might be due to an architecture mismatch or if the model wasn't compiled/built.")
+                    print("Ensure the model architecture matches the saved weights.")
+            else:
+                print(f"Unsupported file format: {filename}. Please use .keras or .h5")
         else:
-            print(f"No checkpoint found at {filepath}") 
+            print(f"No model checkpoint found at {filepath}")
+
+# Example usage (if you want to test the class directly)
+if __name__ == '__main__':
+    pass # Add a pass statement or example code here 

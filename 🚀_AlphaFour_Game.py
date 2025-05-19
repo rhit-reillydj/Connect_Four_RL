@@ -28,7 +28,9 @@ PLAYER_PIECE = 1
 AI_PIECE = -1
 
 MODEL_FOLDER = './temp_connect_four/'
-MODEL_FILENAME = 'best.weights.h5'
+# MODEL_FILENAME = 'best.weights.h5' # Old constant, replaced by preferred/fallback
+PREFERRED_MODEL_FILENAME = 'best.keras'
+FALLBACK_MODEL_FILENAME = 'best.weights.h5'
 
 AI_ARGS = dotdict({
     'cpuct': 1.0,
@@ -102,16 +104,32 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
 def load_model_and_game():
     game = ConnectFourGame()
     nnet = ConnectFourNNet(game, AI_ARGS)
-    model_path = os.path.join(MODEL_FOLDER, MODEL_FILENAME)
-    if os.path.exists(model_path):
+    
+    preferred_model_path = os.path.join(MODEL_FOLDER, PREFERRED_MODEL_FILENAME)
+    fallback_model_path = os.path.join(MODEL_FOLDER, FALLBACK_MODEL_FILENAME)
+    model_loaded = False
+
+    if os.path.exists(preferred_model_path):
         try:
-            nnet.load_checkpoint(folder=MODEL_FOLDER, filename=MODEL_FILENAME)
+            nnet.load_checkpoint(folder=MODEL_FOLDER, filename=PREFERRED_MODEL_FILENAME)
+            st.success(f"Successfully loaded model: {PREFERRED_MODEL_FILENAME}")
+            model_loaded = True
         except Exception as e:
-            st.error(f"Error loading model {MODEL_FILENAME}: {e}. AI may not function.")
-            return game, None, None
-    else:
-        st.error(f"Model not found: {model_path}. AI will not function.")
+            st.warning(f"Error loading preferred model {PREFERRED_MODEL_FILENAME}: {e}. Trying fallback.")
+    
+    if not model_loaded and os.path.exists(fallback_model_path):
+        try:
+            nnet.load_checkpoint(folder=MODEL_FOLDER, filename=FALLBACK_MODEL_FILENAME)
+            st.success(f"Successfully loaded fallback model: {FALLBACK_MODEL_FILENAME}")
+            model_loaded = True
+        except Exception as e:
+            st.error(f"Error loading fallback model {FALLBACK_MODEL_FILENAME}: {e}. AI may not function.")
+            return game, None, None # Critical failure if fallback also fails
+    
+    if not model_loaded:
+        st.error(f"No suitable model found. Searched for {PREFERRED_MODEL_FILENAME} and {FALLBACK_MODEL_FILENAME} in {MODEL_FOLDER}. AI will not function.")
         return game, None, None
+        
     mcts = MCTS(game, nnet, AI_ARGS)
     return game, nnet, mcts
 
