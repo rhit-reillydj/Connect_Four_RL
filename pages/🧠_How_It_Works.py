@@ -17,7 +17,7 @@ def show_how_it_works_page():
         }
 
         .main-title {
-            font-size: 3em;
+            font-size: clamp(2em, 6vw, 3em); /* Responsive */
             font-weight: 700;
             text-align: center;
             margin-bottom: 0.5em;
@@ -26,7 +26,7 @@ def show_how_it_works_page():
         }
 
         .sub-title {
-            font-size: 1.5em;
+            font-size: clamp(1em, 4vw, 1.5em); /* Responsive */
             font-weight: 300;
             text-align: center;
             margin-bottom: 2em;
@@ -35,25 +35,26 @@ def show_how_it_works_page():
 
         .section {
             background-color: rgba(255, 255, 255, 0.05);
-            padding: 2em;
+            padding: clamp(1em, 3vw, 2em); /* Responsive */
             border-radius: 15px;
-            margin-bottom: 2em;
+            margin-bottom: clamp(1em, 3vw, 2em); /* Responsive */
             box-shadow: 0 8px 16px rgba(0,0,0,0.2);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .section h2 {
-            font-size: 2.2em;
+            font-size: clamp(1.5em, 5vw, 2.2em); /* Responsive */
             font-weight: 600;
             color: #00a2ff; /* A vibrant accent blue */
             margin-bottom: 0.7em;
             padding-bottom: 0.3em;
             border-bottom: 2px solid #00a2ff;
-            display: inline-block;
+            display: flex; /* Changed from inline-block to flex */
+            align-items: center; /* Align icon and text */
         }
         
         .section h3 {
-            font-size: 1.6em;
+            font-size: clamp(1.2em, 4vw, 1.6em); /* Responsive */
             font-weight: 600;
             color: #f0f2f6;
             margin-top: 1.5em;
@@ -61,7 +62,7 @@ def show_how_it_works_page():
         }
 
         .section p, .section li {
-            font-size: 1.1em;
+            font-size: clamp(0.9em, 2.5vw, 1.1em); /* Responsive */
             line-height: 1.8;
             color: #d0d0d0;
             margin-bottom: 1em;
@@ -73,7 +74,7 @@ def show_how_it_works_page():
         }
 
         .icon { /* Placeholder for icons */
-            font-size: 2.5em;
+            font-size: clamp(1.8em, 4vw, 2.5em); /* Responsive */
             margin-right: 0.5em;
             vertical-align: middle;
             color: #00a2ff;
@@ -102,7 +103,7 @@ def show_how_it_works_page():
 
     # --- Core Components ---
     st.markdown("<hr style='border-top: 2px solid #00a2ff; margin: 3em 0;'>", unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align: center; color: #ffffff; font-weight: 600;'>Core Components of AlphaFour</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #ffffff; font-weight: 600; font-size: clamp(1.8em, 5.5vw, 2.5em);'>Core Components of AlphaFour</h1>", unsafe_allow_html=True)
     
     cols = st.columns(2)
     with cols[0]:

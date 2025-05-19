@@ -17,8 +17,7 @@ if 'last_restart_timestamp' not in st.session_state:
     st.session_state.last_restart_timestamp = None
 
 # --- Constants ---
-SQUARESIZE_HTML = 70  # Slightly smaller for a tighter look
-RADIUS_HTML = int(SQUARESIZE_HTML * 0.42) # Slightly larger radius within the square
+# SQUARESIZE_HTML and RADIUS_HTML are removed, will be controlled by CSS variables
 BOARD_COLOR_HTML = "#0077cc" # A nice, modern blue
 EMPTY_SLOT_COLOR_HTML = "#005fa3" # Darker blue for empty slot background
 HOLE_COLOR_HTML = "#222222" # Color of the "hole" before a piece is dropped
@@ -47,14 +46,17 @@ def get_player_color_html(piece):
     return "transparent"
 
 def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, current_turn_player):
-    rows, cols = board_array.shape
-    action_row_html = "<div class='action-row' style='display: grid; grid-template-columns: repeat(" + str(game_cols) + ", 1fr); gap: 5px; margin-bottom: 15px; width: " + str(cols * SQUARESIZE_HTML + (cols -1) * 5) + "px; margin-left: auto; margin-right: auto;'>"
+    rows, cols = board_array.shape # game_cols is cols from the board
+
+    # action_row width is now fit-content, grid-template-columns defines its structure
+    action_row_html = f"<div class='action-row' style='grid-template-columns: repeat(var(--current-board-cols), var(--square-size));'>"
     can_player_act = (not game_over_flag and current_turn_player == PLAYER_PIECE)
 
-    for c in range(game_cols):
+    for c in range(cols):
         is_valid_move = valid_moves_array[c]
         action_class = "action-slot-valid" if is_valid_move and can_player_act else "action-slot-disabled"
-        # All pieces will now use the same default style, defined in CSS for .action-piece-visual
+        # .action-slot CSS now defines width/height using var(--square-size)
+        # .action-piece-visual CSS defines its own size using var(--radius)
         piece_visual_html = f"<div class='action-piece-visual'></div>"
         if is_valid_move and can_player_act:
             action_row_html += f"<div class='action-slot {action_class}' onclick=\"window.top.stBridges.send('board_action_bridge', {{ 'action_col': {c}, 'timestamp': new Date().getTime() }})\">{piece_visual_html}</div>"
@@ -62,26 +64,32 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
             action_row_html += f"<div class='action-slot {action_class}'>{piece_visual_html}</div>"
     action_row_html += "</div>"
 
-    html_board_pieces = f"<div class='board-pieces-container' style='display: grid; grid-template-columns: repeat({cols}, {SQUARESIZE_HTML}px); grid-gap: 2px;'>"
+    # board-pieces-container width is fit-content, grid-template-columns defines its structure
+    html_board_pieces = f"<div class='board-pieces-container' style='grid-template-columns: repeat(var(--current-board-cols), var(--square-size));'>"
     for r in range(rows):
-        for c in range(cols):
-            piece_color = get_player_color_html(board_array[r][c])
+        for c_idx in range(cols):
+            piece_color = get_player_color_html(board_array[r][c_idx])
+            # .board-cell, .board-hole, .piece will primarily use CSS variables for sizing in their inline styles
             cell_html = (
-                f"<div class='board-cell' style='width: {SQUARESIZE_HTML}px; height: {SQUARESIZE_HTML}px; background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
-                f"<div class='board-hole' style='width: {RADIUS_HTML*2}px; height: {RADIUS_HTML*2}px; background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
-                f"<div class='piece' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
+                f"<div class='board-cell' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
+                f"<div class='board-hole' style='width: calc(var(--radius) * 2); height: calc(var(--radius) * 2); background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
+                f"<div class='piece' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);\'></div>"
                 f"</div></div>"
             )
             html_board_pieces += cell_html
     html_board_pieces += "</div>"
     
-    board_wrapper_html = f"<div class='board-container' style='background-color: {BOARD_COLOR_HTML}; border: 10px solid {BOARD_COLOR_HTML}; border-radius: 15px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); width: fit-content; margin: 0 auto; padding: 10px;'>"
+    # .board-container width is now fit-content from CSS
+    board_wrapper_html = f"<div class='board-container'>"
     board_wrapper_html += html_board_pieces
     board_wrapper_html += "</div>"
 
-    # Concatenate action row first, then the board container
-    final_html = action_row_html + board_wrapper_html
-    return final_html
+    final_html_content = action_row_html + board_wrapper_html
+    
+    # Wrap the final content in a div that sets the --current-board-cols CSS variable
+    # This wrapper is styled by .responsive-board-wrapper in the main CSS block
+    final_wrapper = f"<div class='responsive-board-wrapper' style='--current-board-cols: {cols};'>\n{final_html_content}\n</div>"
+    return final_wrapper
 
 @st.cache_resource
 def load_model_and_game():
@@ -232,32 +240,85 @@ if restart_signal_data is not None:
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap'); /* Pixel/Retro font */
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+    /* Hide Streamlit's default header anchor link */
+    [data-testid="stHeaderActionElements"] {{
+        display: none !important;
+    }}
+
+    :root {{
+        --square-size: clamp(40px, 8vw, 65px); /* Adjusted for a slightly larger board */
+        --radius: calc(var(--square-size) * 0.42);
+        --action-row-gap: clamp(2px, 0.8vw, 5px);
+        --board-pieces-gap: clamp(1px, 0.5vw, 2px);
+        --board-padding: clamp(5px, 1.5vw, 10px);
+    }}
 
     body, .stApp {{ 
         font-family: 'Poppins', sans-serif; 
         background: linear-gradient(to right, #232526, #414345); 
         color: #f0f2f6; 
-        overflow-x: hidden; /* Prevent horizontal scroll with overlays */
+        overflow-x: hidden;
     }}
-    h1 {{ font-weight: 700; text-align: center; color: #ffffff; padding-top: 20px; padding-bottom: 10px; letter-spacing: 1px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }}
-    .game-message {{ text-align: center; font-size: 1.5em; font-weight: 600; padding: 15px; border-radius: 10px; background-color: rgba(255, 255, 255, 0.1); color: #ffffff; margin: 20px auto; width: fit-content; max-width: 80%; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }}
+    /* Responsive Main Title */
+    h1 {{
+        font-weight: 700; 
+        text-align: center; 
+        color: #ffffff; 
+        padding-top: clamp(10px, 3vh, 20px); 
+        padding-bottom: clamp(5px, 2vh, 10px); 
+        letter-spacing: 1px; 
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        font-size: clamp(1.6em, 6vw, 3.2em); /* Adjusted responsive font size */
+    }}
+    /* Responsive Game Message Bar */
+    .game-message {{
+        text-align: center; 
+        font-size: clamp(1em, 4vw, 1.5em); /* Responsive font size */
+        font-weight: 600; 
+        padding: clamp(10px, 2vw, 15px); /* Responsive padding */
+        border-radius: 10px; 
+        background-color: rgba(255, 255, 255, 0.1); 
+        color: #ffffff; 
+        margin: clamp(10px, 3vh, 20px) auto; /* Responsive margin */
+        width: fit-content; 
+        max-width: 90%; /* Ensure it doesn't get too wide on large screens */
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2); 
+    }}
     
+    .responsive-board-wrapper {{
+        width: 90%; /* Take up 90% of parent, up to max-width */
+        max-width: 600px; /* Max width for larger screens */
+        min-width: 280px; /* Ensure it doesn't get too crunched */
+        margin: 20px auto; /* Centering and some vertical margin */
+        display: flex;
+        flex-direction: column;
+        align-items: center; /* Center .action-row and .board-container */
+        /* --current-board-cols will be set inline here by Python */
+    }}
+
     .action-row {{
         display: grid; 
+        /* grid-template-columns will be set inline by draw_board_html */
+        gap: var(--action-row-gap);
+        width: fit-content; /* Width determined by its content */
+        margin-bottom: 15px;
         position: relative; 
-        z-index: 10; 
+        z-index: 10;
     }}
     .action-slot {{
         display: flex;
         justify-content: center;
         align-items: center;
         background-color: transparent;
-        height: {SQUARESIZE_HTML}px;
+        width: var(--square-size); /* Cell width */
+        height: var(--square-size); /* Cell height */
     }}
+
     .action-piece-visual {{
-        width: {RADIUS_HTML * 2}px;
-        height: {RADIUS_HTML * 2}px;
+        width: calc(var(--radius) * 2); 
+        height: calc(var(--radius) * 2); 
         border-radius: 50%;
         box-sizing: border-box; 
         transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
@@ -280,34 +341,40 @@ st.markdown(f"""
         border-color: #505050;
         opacity: 0.4;
     }}
+
     .board-container {{
-        position: relative;
-        z-index: 1; /* Ensure board is below overlay */
+        width: fit-content; /* Width determined by its content */
+        background-color: {BOARD_COLOR_HTML};
+        border: var(--board-padding) solid {BOARD_COLOR_HTML};
+        border-radius: 15px; 
+        box-shadow: 0 10px 20px rgba(0,0,0,0.3); 
+        padding: var(--board-padding); /* Use CSS variable for padding */
+        position: relative; 
+        z-index: 1;
     }}
-    .stButton[data-testid*=\"restart_game_main_btn\"]>button {{ 
-        background-color: {RED_PLAYER_HTML} !important; 
-        color: white !important;
-        padding: 15px 30px !important;
-        font-size: 1.2em !important;
-        border-radius: 10px !important;
-        border: none !important;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2) !important;
-        font-family: 'Poppins', sans-serif !important;
-        font-weight: 600 !important;
-    }}
-    .stButton[data-testid*=\"restart_game_main_btn\"]>button:hover:not(:disabled) {{ 
-        background-color: #d13026 !important; 
-        transform: translateY(-2px);
-    }}
-    .footer {{ text-align: center; padding: 20px; color: #aaa; font-size: 0.9em; }}
-    div.st-key-player_action_bridge_key {{
-        position: absolute !important; top: -9999px !important; left: -9999px !important;
-        width: 0px !important; height: 0px !important; overflow: hidden !important;
-        padding: 0px !important; margin: 0px !important; border: none !important;
-        visibility: hidden !important; line-height: 0px !important; font-size: 0px !important;
+    .board-pieces-container {{ 
+        display: grid;
+        /* grid-template-columns will be set inline by draw_board_html */
+        gap: var(--board-pieces-gap);
     }}
 
-    /* Add rule for the new restart_game_bridge_key component */
+    /* board-cell, board-hole, piece styles will use CSS vars in draw_board_html */
+    
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button {{ 
+        /* These styles are for the old Streamlit button, not the new overlay button */
+    }}
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button:hover:not(:disabled) {{ 
+        /* These styles are for the old Streamlit button, not the new overlay button */
+    }}
+    /* Responsive Footer */
+    .footer {{
+        text-align: center; 
+        padding: clamp(10px, 3vh, 20px) clamp(5px, 2vw, 10px);
+        color: #aaa; 
+        font-size: clamp(0.7em, 2.5vw, 0.9em); /* Responsive font size */
+    }}
+    
+    div.st-key-player_action_bridge_key,
     div.st-key-restart_game_bridge_key {{
         position: absolute !important; top: -9999px !important; left: -9999px !important;
         width: 0px !important; height: 0px !important; overflow: hidden !important;
@@ -315,7 +382,7 @@ st.markdown(f"""
         visibility: hidden !important; line-height: 0px !important; font-size: 0px !important;
     }}
 
-    /* Fullscreen Overlay Styles */
+    /* Fullscreen Overlay Styles - Make them responsive */
     #win-overlay, #loss-overlay, #draw-overlay {{
         position: fixed;
         top: 0;
@@ -327,86 +394,106 @@ st.markdown(f"""
         justify-content: center;
         align-items: center;
         text-align: center;
-        z-index: 1000; /* Ensure it's on top of everything */
-        padding: 20px;
+        z-index: 1000;
+        padding: clamp(10px, 3vw, 20px); /* Responsive padding for the overlay itself */
         box-sizing: border-box;
     }}
     .overlay-content {{
-        background-color: rgba(0,0,0,0.7);
-        padding: 40px;
-        border-radius: 20px;
+        background-color: rgba(0,0,0,0.75); /* Slightly darker for better contrast with text */
+        padding: clamp(20px, 5vw, 40px); /* Responsive padding */
+        border-radius: clamp(15px, 3vw, 20px); /* Responsive border-radius */
         box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        /* Ensure restart button has space */
         display: flex;
         flex-direction: column;
         align-items: center;
+        max-width: 95%; /* Ensure content box doesn't touch screen edges */
     }}
 
-    /* Win Celebration Styles */
+    /* Win Celebration Styles - Responsive Text */
     #win-overlay {{
-        background: linear-gradient(45deg, rgba(0,128,0,0.85), rgba(60,179,113,0.85)); /* Green to MediumSeaGreen gradient */
+        background: linear-gradient(45deg, rgba(0,128,0,0.85), rgba(60,179,113,0.85));
     }}
     .win-title {{
         font-family: 'Press Start 2P', cursive;
-        font-size: 4.5em; /* Larger title */
+        font-size: clamp(2em, 10vw, 4.5em); /* Responsive font size */
         color: #fff;
-        text-shadow: 3px 3px 0px #006400, 6px 6px 0px #2E8B57; /* Darker green shadow */
+        text-shadow: 3px 3px 0px #006400, 6px 6px 0px #2E8B57;
         margin-bottom: 0.2em;
         animation: pulse-light 1.5s infinite ease-in-out;
     }}
     .win-subtitle {{
-        font-size: 2em;
+        font-size: clamp(1em, 5vw, 2em); /* Responsive font size */
         color: #fff;
         font-weight: 600;
         margin-bottom: 0.5em;
         text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
     }}
     .win-message {{
-        font-size: 2.5em; /* Larger emoji message */
+        font-size: clamp(1.2em, 6vw, 2.5em); /* Responsive font size */
         color: #fff;
         margin-top: 1em;
         animation: bounce-emoji 2s infinite;
     }}
 
-    /* Loss Devastation Styles */
+    /* Loss Devastation Styles - Responsive Text */
     #loss-overlay {{
-        background: linear-gradient(45deg, rgba(50,0,0,0.9), rgba(100,0,0,0.95)); /* Deep, dark reds */
+        background: linear-gradient(45deg, rgba(50,0,0,0.9), rgba(100,0,0,0.95));
     }}
     .loss-title {{
         font-family: 'Press Start 2P', cursive;
-        font-size: 4.5em;
-        color: #a00; /* Dark red */
-        text-shadow: 2px 2px 0px #400, -2px -2px 0px #fcc; /* Darker and lighter red shadow */
+        font-size: clamp(2em, 10vw, 4.5em); /* Responsive font size */
+        color: #a00;
+        text-shadow: 2px 2px 0px #400, -2px -2px 0px #fcc;
         margin-bottom: 0.2em;
         animation: shake-heavy 0.8s cubic-bezier(.36,.07,.19,.97) infinite;
     }}
     .loss-subtitle {{
-        font-size: 1.8em;
+        font-size: clamp(0.9em, 4.5vw, 1.8em); /* Responsive font size */
         color: #ccc;
         font-style: italic;
         margin-bottom: 0.5em;
     }}
     .loss-message {{
-        font-size: 2.5em;
+        font-size: clamp(1.2em, 6vw, 2.5em); /* Responsive font size */
         color: #bbb;
         margin-top: 1em;
     }}
 
-    /* Draw Message Styles */
+    /* Draw Message Styles - Responsive Text */
     #draw-overlay {{
-        background: linear-gradient(45deg, rgba(100,100,100,0.9), rgba(150,150,150,0.95)); /* Neutral grays */
+        background: linear-gradient(45deg, rgba(100,100,100,0.9), rgba(150,150,150,0.95));
     }}
     .draw-title {{
         font-family: 'Press Start 2P', cursive;
-        font-size: 4em;
+        font-size: clamp(1.8em, 9vw, 4em); /* Responsive font size */
         color: #eee;
         text-shadow: 2px 2px 0px #555;
         margin-bottom: 0.2em;
     }}
     .draw-subtitle, .draw-message {{
-        font-size: 1.8em;
+        font-size: clamp(1em, 4.5vw, 1.8em); /* Responsive font size */
         color: #ddd;
         margin-bottom: 0.5em;
+    }}
+    
+    /* Responsive Restart Button in Overlay */
+    .restart-button-overlay {{
+        background-color: {RED_PLAYER_HTML};
+        color: white;
+        padding: clamp(10px, 3vw, 15px) clamp(20px, 5vw, 30px); /* Responsive padding */
+        font-size: clamp(1em, 4vw, 1.3em); /* Responsive font size */
+        border-radius: 10px;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: clamp(20px, 4vh, 30px); /* Responsive margin */
+        transition: background-color 0.2s ease, transform 0.1s ease;
+    }}
+    .restart-button-overlay:hover {{
+        background-color: #d13026;
+        transform: translateY(-2px);
     }}
     
     /* Animations */
@@ -425,25 +512,6 @@ st.markdown(f"""
       20%, 80% {{ transform: translate3d(2px, 2px, 0); }}
       30%, 50%, 70% {{ transform: translate3d(-3px, -3px, 0); }}
       40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
-    }}
-
-    .restart-button-overlay {{
-        background-color: {RED_PLAYER_HTML};
-        color: white;
-        padding: 15px 30px;
-        font-size: 1.3em;
-        border-radius: 10px;
-        border: none;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        font-family: 'Poppins', sans-serif;
-        font-weight: 600;
-        cursor: pointer;
-        margin-top: 30px; /* Space from message to button */
-        transition: background-color 0.2s ease, transform 0.1s ease;
-    }}
-    .restart-button-overlay:hover {{
-        background-color: #d13026; /* Darker red */
-        transform: translateY(-2px);
     }}
 
 </style>
