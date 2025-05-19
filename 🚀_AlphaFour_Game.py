@@ -5,10 +5,10 @@ import time
 from st_bridge import bridge, html # Import streamlit-bridge and html
 
 # Assuming these files are in the same directory or accessible in PYTHONPATH
-from connect_four import ConnectFourGame
-from model import ConnectFourNNet
-from mcts import MCTS
-from utils import dotdict
+from src.connect_four import ConnectFourGame
+from src.model import ConnectFourNNet
+from src.mcts import MCTS
+from src.utils import dotdict
 
 # Initialize bridge data processing timestamps if they don't exist
 if 'last_processed_timestamp' not in st.session_state:
@@ -27,7 +27,7 @@ YELLOW_AI_HTML = "#ffd700"   # Gold/Yellow
 PLAYER_PIECE = 1
 AI_PIECE = -1
 
-MODEL_FOLDER = './temp_connect_four/'
+MODEL_FOLDER = './src/temp_connect_four/'
 # MODEL_FILENAME = 'best.weights.h5' # Old constant, replaced by preferred/fallback
 PREFERRED_MODEL_FILENAME = 'best.keras'
 FALLBACK_MODEL_FILENAME = 'best.weights.h5'
