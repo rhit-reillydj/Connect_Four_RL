@@ -348,10 +348,10 @@ class Coach():
         return final_examples
 
     def learn(self):
-        current_nnet_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'current_selfplay_nnet.keras')
+        current_nnet_weights_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'current_selfplay_nnet.keras')
         # Paths for arena players
-        pnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'pnet_arena.keras')
-        nnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'nnet_arena.keras')
+        pnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'pnet_arena.keras')
+        nnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'nnet_arena.keras')
 
         original_sigint_handler = signal.getsignal(signal.SIGINT)
 
@@ -454,7 +454,7 @@ class Coach():
                         continue
 
                     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Training Phase...")
-                    checkpoint_folder = self.args.get('checkpoint', './temp/')
+                    checkpoint_folder = self.args.get('checkpoint', './src/temp_connect_four/')
                     if not os.path.exists(checkpoint_folder):
                         os.makedirs(checkpoint_folder)
                 
@@ -603,7 +603,7 @@ class Coach():
                 print("Coach: learn() method terminated because shutdown signal was active at the end.", flush=True)
 
     def save_train_examples(self, iteration):
-        folder = self.args.get('checkpoint', './temp/')
+        folder = self.args.get('checkpoint', './src/temp_connect_four/')
         if not os.path.exists(folder):
             os.makedirs(folder)
         filename = os.path.join(folder, "train_examples_history.pkl") 
@@ -616,7 +616,7 @@ class Coach():
             print(f"Error saving training examples: {e}")
 
     def load_train_examples(self, iteration=None): 
-        folder = self.args.get('checkpoint', './temp/')
+        folder = self.args.get('checkpoint', './src/temp_connect_four/')
         example_file = os.path.join(folder, "train_examples_history.pkl")
         
         if os.path.exists(example_file):
@@ -653,9 +653,9 @@ if __name__ == '__main__':
     #     'num_mcts_sims': 25, # For ConnectFour, can be lower than Go
     #     'arena_compare': 10, # Number of games for comparison
     #     'cpuct': 1.0,
-    #     'checkpoint': './temp_connect_four/',
+    #     'checkpoint': './src/temp_connect_four/',
     #     'load_model': False,
-    #     'load_folder_file': ('./temp_connect_four/', 'best.h5'),
+    #     'load_folder_file': ('./src/temp_connect_four/', 'best.h5'),
     #     'lr': 0.001,
     #     'epochs': 10,
     #     'batch_size': 64,

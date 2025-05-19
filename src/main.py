@@ -23,9 +23,9 @@ args = dotdict({
     'num_parallel_self_play_workers': os.cpu_count(), # Number of parallel workers for self-play, defaults to num CPUs.
     'num_parallel_arena_workers': os.cpu_count(),     # Number of parallel workers for arena games, defaults to num CPUs.
 
-    'checkpoint': './temp_connect_four/', # Folder to save checkpoints and examples.
+    'checkpoint': './src/temp_connect_four/', # Folder to save checkpoints and examples.
     'load_model': True,       # Whether to load a saved model on startup.
-    'load_folder_file': ('./temp_connect_four/', 'best.keras'), # MODIFIED - Tuple (folder, filename) for loading model.
+    'load_folder_file': ('./src/temp_connect_four/', 'best.keras'), # MODIFIED - Tuple (folder, filename) for loading model.
     'save_examples_freq': 1,  # Save training examples every N iterations.
 
     # Neural Network specific args
