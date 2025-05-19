@@ -68,13 +68,19 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
     html_board_pieces = f"<div class='board-pieces-container' style='grid-template-columns: repeat(var(--current-board-cols), var(--square-size));'>"
     for r in range(rows):
         for c_idx in range(cols):
-            piece_color = get_player_color_html(board_array[r][c_idx])
-            is_last_move = last_move_coords == (r, c_idx)
-            highlight_class = "last-move" if is_last_move else ""
+            piece_color_on_board = board_array[r][c_idx]
+            display_piece_color = get_player_color_html(piece_color_on_board)
+            highlight_class = ""
+            if last_move_coords == (r, c_idx):
+                if piece_color_on_board == PLAYER_PIECE: # Player's red piece
+                    highlight_class = "last-move-player"
+                elif piece_color_on_board == AI_PIECE: # AI's yellow piece
+                    highlight_class = "last-move-ai"
+            
             cell_html = (
                 f"<div class='board-cell' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
                 f"<div class='board-hole' style='width: calc(var(--radius) * 2); height: calc(var(--radius) * 2); background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
-                f"<div class='piece {highlight_class}' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
+                f"<div class='piece {highlight_class}' style='width: 100%; height: 100%; background-color: {display_piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
                 f"</div></div>"
             )
             html_board_pieces += cell_html
@@ -256,6 +262,8 @@ st.markdown(f"""
         --action-row-gap: clamp(2px, 0.8vw, 5px);
         --board-pieces-gap: clamp(1px, 0.5vw, 2px);
         --board-padding: clamp(5px, 1.5vw, 10px);
+        --player-highlight-color: {YELLOW_AI_HTML}; /* For player's red piece */
+        --ai-highlight-color: {RED_PLAYER_HTML};     /* For AI's yellow piece */
     }}
 
     body, .stApp {{ 
@@ -520,13 +528,18 @@ st.markdown(f"""
       40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
     }}
 
-    .piece.last-move {{
-        border: 4px solid gold;
-        outline: 2px solid #fff;
+    .piece.last-move-player, .piece.last-move-ai {{
+        outline: 2px solid #fff; /* White outline for base contrast */
         box-sizing: border-box;
         transform: scale(1.10);
         z-index: 20;
         transition: border 0.1s, outline 0.1s, transform 0.1s;
+    }}
+    .piece.last-move-player {{
+        border: 4px solid var(--player-highlight-color);
+    }}
+    .piece.last-move-ai {{
+        border: 4px solid var(--ai-highlight-color);
     }}
 
 </style>
