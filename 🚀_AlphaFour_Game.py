@@ -561,7 +561,7 @@ mcts = st.session_state.mcts
 
 # --- Main UI Display (conditionally rendered if game not over, or to show final board state) ---
 if not game_over:
-st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
 
 # Always display the board and action row if game is ready, so player can see final state
 if st.session_state.get("game_ready", False):
@@ -645,7 +645,7 @@ if game_over:
 
 # --- Footer ---
 if not game_over:
-st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
+    st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
 
 # Debugging: Display session state (optional)
 # with st.expander("Session State (Debug)"):
