@@ -529,11 +529,11 @@ st.markdown(f"""
     }}
 
     .piece.last-move-player, .piece.last-move-ai {{
-        outline: 2px solid #fff; /* White outline for base contrast */
+        /* outline: 2px solid #fff; */ /* White outline for base contrast - REMOVED */
         box-sizing: border-box;
         transform: scale(1.10);
         z-index: 20;
-        transition: border 0.1s, outline 0.1s, transform 0.1s;
+        transition: border 0.1s, /* outline 0.1s, */ transform 0.1s; /* outline transition removed */
     }}
     .piece.last-move-player {{
         border: 4px solid var(--player-highlight-color);
