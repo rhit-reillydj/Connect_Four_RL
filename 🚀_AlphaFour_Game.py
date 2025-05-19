@@ -10,6 +10,12 @@ from model import ConnectFourNNet
 from mcts import MCTS
 from utils import dotdict
 
+# Initialize bridge data processing timestamps if they don't exist
+if 'last_processed_timestamp' not in st.session_state:
+    st.session_state.last_processed_timestamp = None
+if 'last_restart_timestamp' not in st.session_state:
+    st.session_state.last_restart_timestamp = None
+
 # --- Constants ---
 SQUARESIZE_HTML = 70  # Slightly smaller for a tighter look
 RADIUS_HTML = int(SQUARESIZE_HTML * 0.42) # Slightly larger radius within the square
@@ -113,10 +119,50 @@ def initialize_game_state():
         st.session_state.error_message = None
         st.session_state.game_ready = True
     st.session_state.game_restarted = False
-    st.session_state.last_processed_timestamp = None
+
+# --- New Helper Functions for Game Over Displays ---
+def display_win_celebration():
+    st.balloons()
+    win_html = f"""
+    <div id="win-overlay">
+        <div class="overlay-content">
+            <h1 class="win-title">VICTORY!</h1>
+            <p class="win-subtitle">You conquered AlphaFour!</p>
+            <p class="win-message">🎉 Congratulations, Master Strategist! 🎉</p>
+            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Play Again?</div>
+        </div>
+    </div>
+    """
+    html(win_html)
+
+def display_loss_devastation():
+    loss_html = f"""
+    <div id="loss-overlay">
+        <div class="overlay-content">
+            <h1 class="loss-title">DEFEATED</h1>
+            <p class="loss-subtitle">AlphaFour reigns supreme...</p>
+            <p class="loss-message">💔 Better luck next time! 💔</p>
+            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Try Again?</div>
+        </div>
+    </div>
+    """
+    html(loss_html)
+
+def display_draw_message():
+    draw_html = f"""
+    <div id="draw-overlay">
+        <div class="overlay-content">
+            <h1 class="draw-title">IT'S A DRAW!</h1>
+            <p class="draw-subtitle">A hard-fought battle!</p>
+            <p class="draw-message">🤝 Well played by both sides! 🤝</p>
+            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Rematch?</div>
+        </div>
+    </div>
+    """
+    html(draw_html)
 
 # --- Page Configuration (Main App Page) ---
-st.set_page_config(page_title="Dominic Reilly's AlphaFour", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Dominic Reilly's AlphaFour Model!", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Initialize or process restart ---
 if 'game_ready' not in st.session_state or st.session_state.get('game_restarted', False):
@@ -130,15 +176,11 @@ if clicked_action_data is not None:
     event_action_col = clicked_action_data.get("action_col")
     event_timestamp = clicked_action_data.get("timestamp")
 
-    # Check if this is a new event based on the timestamp
     if event_timestamp is not None and event_timestamp != st.session_state.get('last_processed_timestamp'):
         print(f"DEBUG bridge: New event received. Timestamp: {event_timestamp}, Col: {event_action_col}")
-
-        # Proceed only if it's the player's turn and game not over
         if not st.session_state.game_over and st.session_state.turn == PLAYER_PIECE:
-            action_col = int(event_action_col) # Ensure it's an int for game logic
+            action_col = int(event_action_col)
             print(f"DEBUG bridge: Processing action for column {action_col}")
-            
             current_board = st.session_state.board
             game_instance = st.session_state.game
             player_piece_val = PLAYER_PIECE
@@ -150,9 +192,13 @@ if clicked_action_data is not None:
                 game_end_result = game_instance.get_game_ended(st.session_state.board, player_piece_val, last_move_col=action_col, last_move_row=move_row)
                 if game_end_result != 0:
                     st.session_state.game_over = True
-                    if game_end_result == 1: st.session_state.message = "You (Red) win! 🎉"
-                    elif game_end_result == -1: st.session_state.message = "AI (Yellow) wins! 😞"
-                    else: st.session_state.message = "It's a Draw! 🤝"
+                    st.session_state.winner = game_end_result
+                    if game_end_result == player_piece_val:
+                        st.session_state.message = "You (Red) win! 🎉"
+                    elif game_end_result == AI_PIECE:
+                        st.session_state.message = "AI (Yellow) wins! 😞"
+                    else:
+                        st.session_state.message = "It's a Draw! 🤝"
                 else:
                     st.session_state.turn = AI_PIECE
                     st.session_state.message = "AI (Yellow) is thinking... 🤔"
@@ -160,8 +206,7 @@ if clicked_action_data is not None:
             else:
                 print(f"DEBUG bridge: Move in col {action_col} is invalid.")
                 st.session_state.message = "Invalid move attempted. Please click a valid column."
-            
-            st.session_state.last_processed_timestamp = event_timestamp # Update last processed timestamp
+            st.session_state.last_processed_timestamp = event_timestamp
             print(f"DEBUG bridge: last_processed_timestamp updated to {event_timestamp}")
         else:
             print(f"DEBUG bridge: New event {event_timestamp} received, but not player's turn or game over. Storing timestamp to prevent re-processing.")
@@ -171,13 +216,30 @@ if clicked_action_data is not None:
     elif event_timestamp is None:
         print(f"DEBUG bridge: Event received without timestamp. Data: {clicked_action_data}. Ignoring.")
 
-# --- CSS Styling --- 
-# Using f-string to inject Python variables for piece sizes and colors
+# --- Bridge for restart game signal (must be called on every run to listen) ---
+restart_signal_data = bridge("restart_game_signal", default=None, key="restart_game_bridge_key")
+if restart_signal_data is not None:
+    event_timestamp = restart_signal_data.get("timestamp")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_restart_timestamp'):
+        print(f"DEBUG bridge: Restart signal received. Timestamp: {event_timestamp}")
+        st.session_state.last_restart_timestamp = event_timestamp
+        st.session_state.game_restarted = True
+        st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_restart_timestamp'):
+        print(f"DEBUG bridge: Stale restart signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
 
+# --- CSS Styling --- 
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-    body, .stApp {{ font-family: 'Poppins', sans-serif; background: linear-gradient(to right, #232526, #414345); color: #f0f2f6; }}
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap'); /* Pixel/Retro font */
+
+    body, .stApp {{ 
+        font-family: 'Poppins', sans-serif; 
+        background: linear-gradient(to right, #232526, #414345); 
+        color: #f0f2f6; 
+        overflow-x: hidden; /* Prevent horizontal scroll with overlays */
+    }}
     h1 {{ font-weight: 700; text-align: center; color: #ffffff; padding-top: 20px; padding-bottom: 10px; letter-spacing: 1px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }}
     .game-message {{ text-align: center; font-size: 1.5em; font-weight: 600; padding: 15px; border-radius: 10px; background-color: rgba(255, 255, 255, 0.1); color: #ffffff; margin: 20px auto; width: fit-content; max-width: 80%; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }}
     
@@ -192,10 +254,7 @@ st.markdown(f"""
         align-items: center;
         background-color: transparent;
         height: {SQUARESIZE_HTML}px;
-        /* cursor: default; /* REMOVE default cursor from base slot */
     }}
-
-    /* Default style for all action pieces */
     .action-piece-visual {{
         width: {RADIUS_HTML * 2}px;
         height: {RADIUS_HTML * 2}px;
@@ -204,12 +263,8 @@ st.markdown(f"""
         transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
         background-color: rgba(255, 65, 54, 0.3);
         border: 2px solid rgba(255, 65, 54, 0.6);
-        /* No cursor style here, parent slot should handle it */
     }}
-
-    .action-slot-valid {{
-        cursor: pointer !important; /* Ensure this applies */
-    }}
+    .action-slot-valid {{ cursor: pointer !important; }}
     .action-slot-valid:hover .action-piece-visual {{
         background-color: {RED_PLAYER_HTML};
         background-image: none; 
@@ -218,41 +273,179 @@ st.markdown(f"""
         transform: scale(1.05);
         opacity: 1.0;
     }}
-
-    .action-slot-disabled {{
-        cursor: not-allowed !important; /* Ensure this applies */
-    }}
+    .action-slot-disabled {{ cursor: not-allowed !important; }}
     .action-slot-disabled .action-piece-visual {{
         background-color: #707070; 
         background-image: none; 
         border-color: #505050;
         opacity: 0.4;
-        /* No cursor style here, parent slot should handle it */
     }}
-
     .board-container {{
         position: relative;
-        z-index: 1;
+        z-index: 1; /* Ensure board is below overlay */
     }}
-
-    .stButton[data-testid*="restart_game_main_btn"]>button {{ background-color: {RED_PLAYER_HTML} !important; }}
-    .stButton[data-testid*="restart_game_main_btn"]>button:hover:not(:disabled) {{ background-color: #d13026 !important; }}
-    .footer {{ text-align: center; padding: 20px; color: #aaa; font-size: 0.9em; }}
-
-    div.st-key-player_action_bridge_key {{
-        position: absolute !important;
-        top: -9999px !important;
-        left: -9999px !important;
-        width: 0px !important;
-        height: 0px !important;
-        overflow: hidden !important;
-        padding: 0px !important;
-        margin: 0px !important;
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button {{ 
+        background-color: {RED_PLAYER_HTML} !important; 
+        color: white !important;
+        padding: 15px 30px !important;
+        font-size: 1.2em !important;
+        border-radius: 10px !important;
         border: none !important;
-        visibility: hidden !important;
-        line-height: 0px !important; 
-        font-size: 0px !important;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2) !important;
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 600 !important;
     }}
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button:hover:not(:disabled) {{ 
+        background-color: #d13026 !important; 
+        transform: translateY(-2px);
+    }}
+    .footer {{ text-align: center; padding: 20px; color: #aaa; font-size: 0.9em; }}
+    div.st-key-player_action_bridge_key {{
+        position: absolute !important; top: -9999px !important; left: -9999px !important;
+        width: 0px !important; height: 0px !important; overflow: hidden !important;
+        padding: 0px !important; margin: 0px !important; border: none !important;
+        visibility: hidden !important; line-height: 0px !important; font-size: 0px !important;
+    }}
+
+    /* Add rule for the new restart_game_bridge_key component */
+    div.st-key-restart_game_bridge_key {{
+        position: absolute !important; top: -9999px !important; left: -9999px !important;
+        width: 0px !important; height: 0px !important; overflow: hidden !important;
+        padding: 0px !important; margin: 0px !important; border: none !important;
+        visibility: hidden !important; line-height: 0px !important; font-size: 0px !important;
+    }}
+
+    /* Fullscreen Overlay Styles */
+    #win-overlay, #loss-overlay, #draw-overlay {{
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        z-index: 1000; /* Ensure it's on top of everything */
+        padding: 20px;
+        box-sizing: border-box;
+    }}
+    .overlay-content {{
+        background-color: rgba(0,0,0,0.7);
+        padding: 40px;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        /* Ensure restart button has space */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }}
+
+    /* Win Celebration Styles */
+    #win-overlay {{
+        background: linear-gradient(45deg, rgba(0,128,0,0.85), rgba(60,179,113,0.85)); /* Green to MediumSeaGreen gradient */
+    }}
+    .win-title {{
+        font-family: 'Press Start 2P', cursive;
+        font-size: 4.5em; /* Larger title */
+        color: #fff;
+        text-shadow: 3px 3px 0px #006400, 6px 6px 0px #2E8B57; /* Darker green shadow */
+        margin-bottom: 0.2em;
+        animation: pulse-light 1.5s infinite ease-in-out;
+    }}
+    .win-subtitle {{
+        font-size: 2em;
+        color: #fff;
+        font-weight: 600;
+        margin-bottom: 0.5em;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }}
+    .win-message {{
+        font-size: 2.5em; /* Larger emoji message */
+        color: #fff;
+        margin-top: 1em;
+        animation: bounce-emoji 2s infinite;
+    }}
+
+    /* Loss Devastation Styles */
+    #loss-overlay {{
+        background: linear-gradient(45deg, rgba(50,0,0,0.9), rgba(100,0,0,0.95)); /* Deep, dark reds */
+    }}
+    .loss-title {{
+        font-family: 'Press Start 2P', cursive;
+        font-size: 4.5em;
+        color: #a00; /* Dark red */
+        text-shadow: 2px 2px 0px #400, -2px -2px 0px #fcc; /* Darker and lighter red shadow */
+        margin-bottom: 0.2em;
+        animation: shake-heavy 0.8s cubic-bezier(.36,.07,.19,.97) infinite;
+    }}
+    .loss-subtitle {{
+        font-size: 1.8em;
+        color: #ccc;
+        font-style: italic;
+        margin-bottom: 0.5em;
+    }}
+    .loss-message {{
+        font-size: 2.5em;
+        color: #bbb;
+        margin-top: 1em;
+    }}
+
+    /* Draw Message Styles */
+    #draw-overlay {{
+        background: linear-gradient(45deg, rgba(100,100,100,0.9), rgba(150,150,150,0.95)); /* Neutral grays */
+    }}
+    .draw-title {{
+        font-family: 'Press Start 2P', cursive;
+        font-size: 4em;
+        color: #eee;
+        text-shadow: 2px 2px 0px #555;
+        margin-bottom: 0.2em;
+    }}
+    .draw-subtitle, .draw-message {{
+        font-size: 1.8em;
+        color: #ddd;
+        margin-bottom: 0.5em;
+    }}
+    
+    /* Animations */
+    @keyframes pulse-light {{
+        0% {{ transform: scale(1); opacity: 0.9; }}
+        50% {{ transform: scale(1.05); opacity: 1; }}
+        100% {{ transform: scale(1); opacity: 0.9; }}
+    }}
+    @keyframes bounce-emoji {{
+        0%, 20%, 50%, 80%, 100% {{ transform: translateY(0); }}
+        40% {{ transform: translateY(-20px); }}
+        60% {{ transform: translateY(-10px); }}
+    }}
+    @keyframes shake-heavy {{
+      10%, 90% {{ transform: translate3d(-1px, -1px, 0); }}
+      20%, 80% {{ transform: translate3d(2px, 2px, 0); }}
+      30%, 50%, 70% {{ transform: translate3d(-3px, -3px, 0); }}
+      40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
+    }}
+
+    .restart-button-overlay {{
+        background-color: {RED_PLAYER_HTML};
+        color: white;
+        padding: 15px 30px;
+        font-size: 1.3em;
+        border-radius: 10px;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 30px; /* Space from message to button */
+        transition: background-color 0.2s ease, transform 0.1s ease;
+    }}
+    .restart-button-overlay:hover {{
+        background-color: #d13026; /* Darker red */
+        transform: translateY(-2px);
+    }}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -263,14 +456,14 @@ st.title("Dominic Reilly's AlphaFour Model!")
 if st.session_state.get('error_message'):
     st.error(st.session_state.error_message)
     if st.button("Try Re-initializing Game", key="reinit_err_btn"):
-        st.session_state.game_restarted = True # Mark for reinitialization
+        st.session_state.game_restarted = True 
         st.rerun()
     st.stop()
 
 if not st.session_state.get("game_ready", False):
     st.error("Game could not be initialized. Please check model files or console.")
     if st.button("Retry Initialization", key="retry_init_btn"):
-        st.session_state.game_restarted = True # Mark for reinitialization
+        st.session_state.game_restarted = True
         st.rerun()
     st.stop()
 
@@ -284,14 +477,15 @@ ai_thinking = st.session_state.ai_thinking
 nnet = st.session_state.nnet
 mcts = st.session_state.mcts
 
-# --- Main UI Display ---
-st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
+# --- Main UI Display (conditionally rendered if game not over, or to show final board state) ---
+if not game_over:
+    st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
 
-# Board display (NOW INCLUDES ACTION ROW)
-# We need to pass valid_moves and game_over status to draw_board_html
-valid_moves = game.get_valid_moves(board) # Get current valid moves
-board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn)
-html(board_html_content) # New way using st_bridge.html
+# Always display the board and action row if game is ready, so player can see final state
+if st.session_state.get("game_ready", False):
+    valid_moves = game.get_valid_moves(board) 
+    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn) # Pass game_over
+    html(board_html_content)
 
 # --- AI's Turn Logic ---
 if not game_over and turn == AI_PIECE and ai_thinking:
@@ -312,39 +506,63 @@ if not game_over and turn == AI_PIECE and ai_thinking:
             if valid_indices: ai_action = valid_indices[0]
             else:
                 st.session_state.game_over = True
+                st.session_state.winner = 0 # Indicate draw or no moves
                 st.session_state.message = "Game ended: No valid AI moves."
-                st.rerun() # Rerun to show game over
+                st.rerun() 
                 st.stop() 
 
         new_board, _, ai_move_row = game.get_next_state(board, AI_PIECE, ai_action)
         st.session_state.board = new_board
-        game_end_result = game.get_game_ended(st.session_state.board, AI_PIECE, last_move_col=ai_action, last_move_row=ai_move_row)
         
-        if game_end_result != 0:
+        # Process game end after AI's move
+        current_game_end_result = game.get_game_ended(st.session_state.board, AI_PIECE, last_move_col=ai_action, last_move_row=ai_move_row)
+        
+        if current_game_end_result != 0: # Game has ended
             st.session_state.game_over = True
-            if game_end_result == 1: st.session_state.message = "AI (Yellow) wins! 😞"
-            elif game_end_result == -1: st.session_state.message = "You (Red) win! 🎉"
-            else: st.session_state.message = "It's a Draw! 🤝"
-        else:
+            
+            # Correctly determine st.session_state.winner based on who moved (AI) and the result
+            # This addresses the bug where AI winning might return PLAYER_PIECE from get_game_ended
+            if current_game_end_result == PLAYER_PIECE: 
+                # If get_game_ended returns PLAYER_PIECE (1) after AI's move, assume AI (-1) won
+                st.session_state.winner = AI_PIECE 
+            elif current_game_end_result == AI_PIECE: 
+                # If get_game_ended returns AI_PIECE (-1) after AI's move, assume Player (1) won (AI blundered)
+                st.session_state.winner = PLAYER_PIECE
+            else: # Draw or other neutral end state
+                st.session_state.winner = current_game_end_result # Use the draw value directly
+
+            # Set message based on the corrected st.session_state.winner
+            if st.session_state.winner == AI_PIECE:
+                st.session_state.message = "AI (Yellow) wins! 😞"
+            elif st.session_state.winner == PLAYER_PIECE:
+                st.session_state.message = "You (Red) win! 🎉"
+            else: # Draw
+                st.session_state.message = "It's a Draw! 🤝"
+        else: # Game continues
             st.session_state.turn = PLAYER_PIECE
             st.session_state.message = "Your turn, Red Player! Select a column."
+            
     st.session_state.ai_thinking = False
-    print("DEBUG AI: AI turn finished, about to call st.rerun()")
     st.rerun()
 
 # --- Game Over Display and Restart ---
 if game_over:
-    if "You (Red) win!" in st.session_state.message: st.success(st.session_state.message)
-    elif "AI (Yellow) wins!" in st.session_state.message: st.error(st.session_state.message) 
-    else: st.info(st.session_state.message)
+    winner_val = st.session_state.get('winner')
+
+    if winner_val == PLAYER_PIECE:
+        display_win_celebration()
+    elif winner_val == AI_PIECE:
+        display_loss_devastation()
+    else:
+        display_draw_message()
     
-    if st.button("Restart Game", key="restart_game_main_btn"): # Key used for specific CSS if needed
-        st.session_state.game_restarted = True
-        print("DEBUG Restart: Restart button clicked, game_restarted set, about to call st.rerun()") # Console Debug
-        st.rerun()
+    # The restart button is now part of the HTML in the display_ functions
+    # and handled by the 'restart_game_signal' bridge above.
+    # Remove old st.button logic for restart here.
 
 # --- Footer ---
-st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
+if not game_over:
+    st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
 
 # Debugging: Display session state (optional)
 # with st.expander("Session State (Debug)"):
