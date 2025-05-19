@@ -521,12 +521,12 @@ st.markdown(f"""
       40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
     }}
 
-    .board-cell.last-move {
+    .board-cell.last-move {{
         outline: 3px solid gold;
         outline-offset: -3px; /* Pulls outline slightly inside the cell padding */
         /* border-radius: 50%; /* If we want the highlight itself to be round */
         /* z-index: 5; /* Ensure it's above other cells if needed, but outline shouldn't cause overlap issues */
-    }
+    }}
 
 </style>
 """, unsafe_allow_html=True)
