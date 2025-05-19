@@ -3,6 +3,10 @@ from collections import deque
 import time
 import os
 import random # For shuffling examples
+import multiprocessing # Added for parallel processing
+from functools import partial # Added for passing args to worker
+import signal # For more graceful handling
+import sys    # For sys.exit() if needed
 
 # Assuming MCTS, ConnectFourGame, ConnectFourNNet are in these files
 from mcts import MCTS
@@ -10,32 +14,252 @@ from arena import Arena # Assuming Arena is in arena.py
 from connect_four import ConnectFourGame # Added import
 from model import ConnectFourNNet      # Added import
 
+# Global holder for the shutdown event for worker processes
+SHARED_SHUTDOWN_EVENT_HOLDER = {}
+
+def init_worker_event(main_shutdown_event):
+    """Initializer for pool workers to receive the shutdown event."""
+    SHARED_SHUTDOWN_EVENT_HOLDER['event'] = main_shutdown_event
+    print(f"[Worker {os.getpid()}] Initialized with shutdown event.") # Optional: for debugging
+
+# Worker function for parallel self-play. Must be at top-level for pickling.
+def _execute_episode_worker(worker_args_tuple):
+    """
+    Worker function to execute a single episode of self-play.
+    Args:
+        worker_args_tuple: A tuple containing (game_class, nnet_class, coach_args, current_nnet_weights_path, episode_num)
+                           NOTE: shutdown_event is now accessed globally via SHARED_SHUTDOWN_EVENT_HOLDER
+    Returns:
+        A list of training examples from the episode, or None if an error occurs.
+    """
+    print(f"[SelfPlayWorker {os.getpid()}] Entered _execute_episode_worker. Args tuple is present: {worker_args_tuple is not None}") # DIAGNOSTIC PRINT ADDED
+    game_class, nnet_class, coach_args, current_nnet_weights_path, episode_idx = worker_args_tuple
+    shutdown_event_worker = SHARED_SHUTDOWN_EVENT_HOLDER.get('event')
+    
+    print(f"[SelfPlayWorker {os.getpid()}] Starting episode {episode_idx}")
+    start_time_worker = time.time()
+
+    game_instance = game_class() # Instantiate the game
+    nnet_instance = nnet_class(game_instance, coach_args) # Instantiate the nnet
+    
+    try:
+        # nnet_instance.load_checkpoint(filepath=current_nnet_weights_path)
+        folder, filename = os.path.split(current_nnet_weights_path)
+        nnet_instance.load_checkpoint(folder=folder, filename=filename)
+    except Exception as e:
+        print(f"[SelfPlayWorker {os.getpid()}] Error loading nnet weights from {current_nnet_weights_path}: {e}")
+        return None # Or raise error
+
+    mcts_instance = MCTS(game_instance, nnet_instance, coach_args)
+    
+    # --- Replicated logic from Coach.execute_episode --- 
+    train_examples_episode = []
+    board = game_instance.get_initial_board()
+    current_player = 1
+    episode_step = 0
+
+    mcts_instance.set_nnet(nnet_instance) # Should be redundant if passed in constructor correctly
+    mcts_instance.reset_search_state() # Reset MCTS state once at the start of the episode
+
+    while True:
+        if shutdown_event_worker and shutdown_event_worker.is_set():
+            print(f"[SelfPlayWorker {os.getpid()}] Episode {episode_idx}: Shutdown signal detected, aborting self-play episode.")
+            return None # Or an empty list to indicate abortion
+
+        episode_step += 1
+        canonical_board = game_instance.get_canonical_form(board, current_player)
+        temp = int(episode_step < coach_args.get('temp_threshold', 15))
+        
+        pi = mcts_instance.getActionProb(canonical_board, temp=temp)
+        
+        # Ensure pi is a valid probability distribution (e.g. sums to 1)
+        # This can be an issue if MCTS returns all zeros due to some edge case
+        if not np.any(pi) or np.sum(pi) == 0:
+            print(f"[SelfPlayWorker {os.getpid()}] Warning: MCTS returned all zero policy for episode {episode_idx}, board:\n{canonical_board}")
+            valids = game_instance.get_valid_moves(canonical_board)
+            if np.sum(valids) > 0:
+                pi = valids / np.sum(valids) # Fallback to uniform random over valid moves
+            else: # No valid moves, game should have ended
+                print(f"[SelfPlayWorker {os.getpid()}] Error: No valid moves and zero policy for episode {episode_idx}. Game should be over.")
+                # Attempt to get game result as is
+                game_result = game_instance.get_game_ended(board, current_player)
+                break
+        elif abs(np.sum(pi) - 1.0) > 1e-6 : # Check if pi sums to 1
+            # print(f"[Worker {os.getpid()}] Normalizing pi in worker for episode {episode_idx} as sum was {np.sum(pi)}.")
+            pi = pi / np.sum(pi)
+
+        sym = game_instance.get_symmetries(canonical_board, pi)
+        for b_sym, p_sym in sym:
+            train_examples_episode.append([b_sym, current_player, p_sym, None]) 
+
+        try:
+            action = np.random.choice(len(pi), p=pi)
+        except ValueError as e:
+             print(f"[SelfPlayWorker {os.getpid()}] Error choosing action with pi {pi} (sum: {np.sum(pi)}) for episode {episode_idx}: {e}. Board:\n{canonical_board}")
+             # Attempt to recover if possible, e.g. by choosing a valid random move
+             valids = game_instance.get_valid_moves(canonical_board)
+             if np.sum(valids) > 0:
+                 action = np.random.choice(np.where(valids == 1)[0])
+             else:
+                 game_result = game_instance.get_game_ended(board, current_player)
+                 break # No valid moves, break
+
+        if not game_instance.get_valid_moves(canonical_board)[action]:
+            # This should ideally not happen if pi is correctly masked by MCTS
+            print(f"[SelfPlayWorker {os.getpid()}] Warning: MCTS (or subsequent sampling) chose an invalid action {action} with pi {pi} for episode {episode_idx}. Board:\n{canonical_board}")
+            valid_actions = np.where(game_instance.get_valid_moves(canonical_board) == 1)[0]
+            if len(valid_actions) == 0: 
+                print(f"[SelfPlayWorker {os.getpid()}] Error: No valid moves left but game not ended by MCTS for episode {episode_idx}.")
+                game_result = game_instance.get_game_ended(board, current_player)
+                break 
+            action = np.random.choice(valid_actions)
+            
+        board, next_player_val, move_row = game_instance.get_next_state(board, current_player, action)
+        # Pass last_move_col and last_move_row to get_game_ended if your game implementation needs it
+        game_result = game_instance.get_game_ended(board, current_player, last_move_col=action, last_move_row=move_row)
+
+        if game_result != 0:
+            break # Game ended
+        current_player = next_player_val
+    
+    # Assign results to training examples
+    final_examples_for_episode = []
+    if game_result !=0: 
+        for hist_board, hist_player, hist_pi, _ in train_examples_episode:
+            # Perspective of the player who made the move for that board state
+            if hist_player == current_player: # Game ended on current_player's turn (they lost or drew)
+                final_examples_for_episode.append((hist_board, hist_pi, game_result if game_result != hist_player else -game_result))
+            else: # Game ended on opponent's turn (hist_player won or drew)
+                final_examples_for_episode.append((hist_board, hist_pi, -game_result if game_result != hist_player else game_result))
+    
+    print(f"[SelfPlayWorker {os.getpid()}] Finished episode {episode_idx} in {time.time()-start_time_worker:.2f}s. Examples: {len(final_examples_for_episode)}")
+    return final_examples_for_episode
+
+# Worker function for parallel Arena games. Must be at top-level for pickling.
+def _play_arena_game_worker(worker_args_tuple):
+    """
+    Worker function to play a single Arena game.
+    Args:
+        worker_args_tuple: A tuple containing 
+                           (game_class, nnet_class, coach_args, 
+                            p1_nnet_weights_path, p2_nnet_weights_path, 
+                            game_idx, verbose_arena)
+                           NOTE: shutdown_event is now accessed globally via SHARED_SHUTDOWN_EVENT_HOLDER
+    Returns:
+        int: Result of the game from player1's perspective (1 if P1 won, -1 if P2 won, 0 for draw), 
+             or None if shutdown was triggered.
+    """
+    game_class, nnet_class, coach_args, p1_weights_path, p2_weights_path, game_idx, verbose = worker_args_tuple
+    shutdown_event_worker = SHARED_SHUTDOWN_EVENT_HOLDER.get('event')
+    
+    print(f"[ArenaWorker {os.getpid()}] Starting game {game_idx}")
+
+    game_instance = game_class()
+    
+    # Player 1 (e.g., new nnet)
+    nnet1 = nnet_class(game_instance, coach_args)
+    try:
+        # nnet1.load_checkpoint(filepath=p1_weights_path)
+        folder, filename = os.path.split(p1_weights_path)
+        nnet1.load_checkpoint(folder=folder, filename=filename)
+    except Exception as e:
+        print(f"[ArenaWorker {os.getpid()}] Error loading P1 nnet weights from {p1_weights_path}: {e}")
+        return 0 # Default to draw or handle error appropriately
+    mcts1 = MCTS(game_instance, nnet1, coach_args)
+    player1_func = lambda board_state: np.argmax(mcts1.getActionProb(board_state, temp=0))
+
+    # Player 2 (e.g., previous best nnet)
+    nnet2 = nnet_class(game_instance, coach_args)
+    try:
+        # nnet2.load_checkpoint(filepath=p2_weights_path)
+        folder, filename = os.path.split(p2_weights_path)
+        nnet2.load_checkpoint(folder=folder, filename=filename)
+    except Exception as e:
+        print(f"[ArenaWorker {os.getpid()}] Error loading P2 nnet weights from {p2_weights_path}: {e}")
+        return 0 # Default to draw or handle error appropriately
+    mcts2 = MCTS(game_instance, nnet2, coach_args)
+    player2_func = lambda board_state: np.argmax(mcts2.getActionProb(board_state, temp=0))
+
+    # Arena game logic (simplified from Arena class)
+    players = [player2_func, None, player1_func] # P1 is at index 2 (for current_player_idx=1), P2 at index 0 (for current_player_idx=-1)
+    current_player_idx = 1 # Start with player 1
+    board = game_instance.get_initial_board()
+    it = 0
+    
+    # Ensure MCTS search state is reset for each player at the start of their turn in an arena game
+    # This is typically handled by how MCTS is used by playerX_func, 
+    # but explicit reset inside playerX_func might be safer if MCTS instances are reused across games (not the case here per game).
+    # The playerX_func created above uses a fresh MCTS instance for each game implicitly.
+    # If MCTS instances were shared, they would need mctsX.reset_search_state() before getActionProb.
+    # The nnet_player/pnet_player in original Coach.learn did this explicitly.
+    # For this worker, since mcts1 and mcts2 are local to this game, their state is fresh.
+    # We need to ensure that getActionProb inside the player functions doesn't carry over state from previous calls *within the same game* if not desired for arena.
+    # However, for Arena, it is standard to reset MCTS for *each move decision* to get an independent assessment.
+    # Modifying playerX_func slightly:
+    
+    def get_player_action(mcts_player, board_state_canonical):
+        mcts_player.reset_search_state() # Reset for each move in Arena for fair comparison
+        pi = mcts_player.getActionProb(board_state_canonical, temp=0)
+        return np.argmax(pi)
+
+    player1_final_func = partial(get_player_action, mcts1)
+    player2_final_func = partial(get_player_action, mcts2)
+    players = [player2_final_func, None, player1_final_func]
+
+    while game_instance.get_game_ended(board, current_player_idx) == 0:
+        if shutdown_event_worker and shutdown_event_worker.is_set():
+            print(f"[ArenaWorker {os.getpid()}] Game {game_idx}: Shutdown signal detected, aborting arena game.")
+            return None # Indicate game was aborted
+
+        it += 1
+        if verbose: print(f"[ArenaWorker {os.getpid()}] Game {game_idx}, Turn {it}, Player {current_player_idx}")
+        
+        canonical_board = game_instance.get_canonical_form(board, current_player_idx)
+        action = players[current_player_idx + 1](canonical_board)
+
+        valids = game_instance.get_valid_moves(canonical_board)
+        if not valids[action]:
+            print(f"[ArenaWorker {os.getpid()}] Game {game_idx}: Action {action} is not valid! Valids: {valids}. Board:\n{canonical_board}")
+            # This indicates an issue with the MCTS or player logic if it picks an invalid move.
+            # Force a loss for the current player.
+            return -current_player_idx # P1 loses if current_player_idx is 1, P2 loses if current_player_idx is -1
+            
+        board, new_current_player_idx, move_row = game_instance.get_next_state(board, current_player_idx, action)
+        # Check game end using the player who just moved (current_player_idx) and their move (action, move_row)
+        game_end_status = game_instance.get_game_ended(board, current_player_idx, last_move_col=action, last_move_row=move_row)
+        
+        if game_end_status != 0:
+            result_p1_perspective = game_end_status * current_player_idx
+            print(f"[ArenaWorker {os.getpid()}] Game {game_idx} over. Result for P1 perspective: {result_p1_perspective}")
+            if verbose: print(f"    (Verbose: Game {game_idx} ended with status {game_end_status} for player {current_player_idx})")
+            return result_p1_perspective # Convert to P1's perspective
+        
+        current_player_idx = new_current_player_idx
+        if it > game_instance.get_max_game_len(): # Safety break for excessively long games
+            print(f"[ArenaWorker {os.getpid()}] Game {game_idx} exceeded max length. Declaring draw.")
+            return 0
+
+    # Fallback if loop terminates unexpectedly (should be caught by get_game_ended check)
+    final_game_status = game_instance.get_game_ended(board, 1) # Check from P1's perspective
+    print(f"[ArenaWorker {os.getpid()}] Game {game_idx} loop ended unexpectedly or by max length. Final result for P1 perspective: {final_game_status}")
+    return final_game_status
+
 class Coach():
     """
     This class executes the self-play + learning loop.
     """
-    def __init__(self, game: ConnectFourGame, nnet: ConnectFourNNet, args):
+    def __init__(self, game: ConnectFourGame, nnet: ConnectFourNNet, args, shutdown_event_main: multiprocessing.Event):
         """
         Initialize the Coach.
         Args:
             game: An instance of the game class (e.g., ConnectFourGame).
             nnet: An instance of the neural network class (e.g., ConnectFourNNet).
             args: Dictionary or argparse object with hyperparameters.
-                  Expected keys:
-                  num_iters (int): Number of training iterations.
-                  num_eps (int): Number of self-play games to generate per iteration.
-                  temp_threshold (int): Number of moves after which temperature becomes 0.
-                  update_threshold (float): Threshold for accepting new model in Arena.
-                  max_len_of_queue (int): Maximum size of the training examples deque.
-                  num_mcts_sims (int): Passed to MCTS.
-                  arena_compare (int): Number of games to play in arena.
-                  cpuct (float): Passed to MCTS.
-                  checkpoint (str): Folder to save checkpoints.
-                  load_model (bool): Whether to load a saved model.
-                  load_folder_file (tuple): (folder, filename) for loading.
+            shutdown_event_main: A multiprocessing.Event to signal shutdown.
         """
         self.game = game
         self.nnet = nnet
+        self.shutdown_event = shutdown_event_main # Store the shutdown event
         # Create a new instance of the nnet's class for pnet, using the same args
         self.pnet = self.nnet.__class__(self.game, args) 
         self.args = args
@@ -73,13 +297,17 @@ class Coach():
         episode_step = 0
         
         self.mcts.set_nnet(self.nnet) # Ensure MCTS is using the primary nnet for self-play
+        self.mcts.reset_search_state() # Reset MCTS state once at the start of the episode
 
         while True:
+            if self.shutdown_event and self.shutdown_event.is_set():
+                print(f"Coach.execute_episode: Shutdown signal detected, aborting episode.")
+                return None # Or an empty list
+
             episode_step += 1
             canonical_board = self.game.get_canonical_form(board, current_player)
             temp = int(episode_step < self.args.get('temp_threshold', 15))
             
-            self.mcts.reset_search_state() # Reset MCTS state for new move
             pi = self.mcts.getActionProb(canonical_board, temp=temp)
             
             sym = self.game.get_symmetries(canonical_board, pi)
@@ -120,81 +348,281 @@ class Coach():
         return final_examples
 
     def learn(self):
-        for i in range(1, self.args.get('num_iters', 100) + 1):
-            print(f'------ ITERATION {i} ------')
-            print("Starting Self-Play Phase...")
-            iteration_train_examples = deque([])
-            num_eps_to_run = self.args.get('num_eps', 50)
-            for eps in range(num_eps_to_run):
-                start_time = time.time()
-                # self.mcts.set_nnet(self.nnet) # Already set at start of execute_episode or after training
-                new_examples = self.execute_episode()
-                if new_examples: 
-                    iteration_train_examples.extend(new_examples)
-                print(f"Self-Play Episode {eps+1}/{num_eps_to_run} completed in {time.time()-start_time:.2f}s. Examples: {len(new_examples if new_examples else [])}")
-            
-            self.train_examples_history.extend(iteration_train_examples)
-            if i % self.args.get('save_examples_freq', 5) == 0: 
-                self.save_train_examples(i)
-            
+        current_nnet_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'current_selfplay_nnet.weights.h5')
+        # Paths for arena players
+        pnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'pnet_arena.weights.h5')
+        nnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './temp/'), 'nnet_arena.weights.h5')
 
-            if not self.train_examples_history:
-                print("No training examples available. Skipping training and arena phase.")
-                continue
+        original_sigint_handler = signal.getsignal(signal.SIGINT)
 
-            print("Starting Training Phase...")
-            checkpoint_folder = self.args.get('checkpoint', './temp/')
-            if not os.path.exists(checkpoint_folder):
-                os.makedirs(checkpoint_folder)
-            
-            # Save current nnet (which is the best nnet so far) to pnet.weights.h5 to serve as the challenger
-            self.nnet.save_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5')
-            # pnet loads these weights
-            self.pnet.load_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5')
-            
-            train_data = list(self.train_examples_history)
-            random.shuffle(train_data)
-            
-            print(f"Training nnet on {len(train_data)} examples...")
-            self.nnet.train(train_data) # nnet is trained in-place
-            self.mcts.set_nnet(self.nnet) # Update self-play MCTS with newly trained nnet
+        def sigint_handler_coach(signum, frame):
+            print("\nSIGINT received by Coach main process. Setting shutdown event...", flush=True)
+            self.shutdown_event.set()
+            # Do not do more here; let the loops check the event.
+            # Restoring handler immediately might allow multiple interrupts to bypass event logic.
 
-            print("Starting Arena Comparison Phase...")
-            def nnet_player(board_state):
-                self.mcts.set_nnet(self.nnet) # Use the new nnet
-                self.mcts.reset_search_state()
-                pi = self.mcts.getActionProb(board_state, temp=0)
-                return np.argmax(pi)
+        signal.signal(signal.SIGINT, sigint_handler_coach)
 
-            def pnet_player(board_state):
-                self.mcts.set_nnet(self.pnet) # Use the challenger pnet
-                self.mcts.reset_search_state()
-                pi = self.mcts.getActionProb(board_state, temp=0)
-                return np.argmax(pi)
-            
-            display_fn = self.game.display if hasattr(self.game, 'display') else None
+        try:
+            for i in range(1, self.args.get('num_iters', 100) + 1):
+                if self.shutdown_event.is_set():
+                    print(f"Coach: Iteration {i} loop start: Shutdown event already set. Breaking from learn loop.", flush=True)
+                    break
 
-            arena = Arena(nnet_player, pnet_player, self.game, display=display_fn)
-            arena_compare_games = self.args.get('arena_compare', 20)
-            print(f"Playing {arena_compare_games} games in Arena...")
-            n_wins, p_wins, draws = arena.play_games(arena_compare_games, verbose=self.args.get('arena_verbose', False))
-            print(f"ARENA RESULTS: NewNet wins: {n_wins}, PrevNet wins: {p_wins}, Draws: {draws}")
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ------ ITERATION {i} ------")
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Self-Play Phase...")
+                
+                # Save the current neural network for worker processes to load
+                # self.nnet.save_checkpoint(filepath=current_nnet_weights_path)
+                current_folder, current_filename = os.path.split(current_nnet_weights_path)
+                self.nnet.save_checkpoint(folder=current_folder, filename=current_filename)
 
-            total_played = n_wins + p_wins
-            if total_played == 0: 
-                win_rate = 0
-            else:
-                win_rate = float(n_wins) / total_played
+                iteration_train_examples_collected = [] # Use a list to collect from workers
+                num_eps_to_run = self.args.get('num_eps', 50)
+                
+                # Determine number of parallel processes
+                # Max out at num_eps_to_run, or CPU count, or a user-defined arg if available
+                num_parallel_workers = self.args.get('num_parallel_self_play_workers', os.cpu_count())
+                actual_workers = min(num_parallel_workers, num_eps_to_run, os.cpu_count() if os.cpu_count() else 1)
+                print(f"Running {num_eps_to_run} self-play episodes using {actual_workers} parallel worker(s)...")
 
-            if win_rate >= self.args.get('update_threshold', 0.50):
-                print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
-                self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.weights.h5')
-                # self.mcts.set_nnet(self.nnet) already done after training
-            else:
-                print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
-                self.nnet.load_checkpoint(folder=checkpoint_folder, filename='pnet.weights.h5') 
-                self.mcts.set_nnet(self.nnet) # Update MCTS with the reverted nnet
-            print("------------------------")
+                # Prepare arguments for each worker
+                # Pass game_class and nnet_class for re-instantiation in worker
+                # REMOVED self.shutdown_event from worker_arg_list
+                worker_arg_list = [
+                    (self.game.__class__, self.nnet.__class__, self.args, current_nnet_weights_path, eps_idx) 
+                    for eps_idx in range(num_eps_to_run)
+                ]
+
+                if actual_workers > 1:
+                    try:
+                        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Self-Play: Initializing multiprocessing pool with {actual_workers} workers...")
+                        with multiprocessing.Pool(processes=actual_workers, initializer=init_worker_event, initargs=(self.shutdown_event,)) as pool:
+                            async_results = pool.map_async(_execute_episode_worker, worker_arg_list)
+                            
+                            while not async_results.ready():
+                                try:
+                                    async_results.wait(timeout=0.5) # Check more frequently
+                                except multiprocessing.TimeoutError:
+                                    pass # Just means timeout expired, loop and check event
+                                if self.shutdown_event.is_set():
+                                    print("Coach: Shutdown signal detected during self-play result wait. Terminating pool...", flush=True)
+                                    pool.terminate() 
+                                    pool.join()      
+                                    break 
+                            
+                            if self.shutdown_event.is_set():
+                                print("Coach: Self-play pool processing was aborted due to shutdown.", flush=True)
+                            else:
+                                try:
+                                    # Add a timeout to get() to prevent indefinite blocking if something unexpected happened.
+                                    results = async_results.get(timeout=5.0) 
+                                    for res_list in results:
+                                        if res_list is not None: 
+                                            iteration_train_examples_collected.extend(res_list)
+                                    print(f"Self-Play Phase: Collected {len(iteration_train_examples_collected)} examples from {num_eps_to_run} episodes.")
+                                except multiprocessing.TimeoutError:
+                                    print("Coach: Timeout waiting for self-play results from pool. Shutdown event may not have been processed by workers in time.", flush=True)
+                                except Exception as e:
+                                    print(f"Error retrieving self-play results after pool: {e}", flush=True)
+                        # Pool implicitly closed and joined here by `with` statement if not terminated early.
+                    except Exception as e:
+                        # This catches errors during pool setup or map_async, or if KeyboardInterrupt happens before/during `with Pool`.
+                        # If sigint_handler_coach set the event, the outer loop should catch it.
+                        print(f"Error during parallel self-play setup or outer pool operations: {e}. Self-play examples may be incomplete.", flush=True)
+                        if self.shutdown_event.is_set():
+                             print("Shutdown event was set during this exception.", flush=True)
+                        # Fallback logic... (already present, ensure it also checks shutdown_event)
+                        iteration_train_examples_collected.clear()
+                        for eps_num_seq in range(num_eps_to_run):
+                            start_time_seq = time.time()
+                            # execute_episode is part of the class, so it uses self.mcts, self.nnet
+                            # For sequential fallback, ensure mcts uses the correct nnet (already handled by set_nnet in original execute_episode)
+                            new_examples_seq = self.execute_episode() # Uses the original class method
+                            if new_examples_seq: 
+                                iteration_train_examples_collected.extend(new_examples_seq)
+                            print(f"Self-Play Episode {eps_num_seq+1}/{num_eps_to_run} (sequential fallback) completed in {time.time()-start_time_seq:.2f}s. Examples: {len(new_examples_seq if new_examples_seq else [])}")
+                else: # Run sequentially if only 1 worker specified
+                    print("Running self-play sequentially (1 worker).")
+                    for eps_num_seq in range(num_eps_to_run):
+                        if self.shutdown_event.is_set():
+                            print("Coach: Shutdown during sequential self-play.", flush=True)
+                            break
+                        start_time_seq = time.time()
+                        new_examples_seq = self.execute_episode()
+                        if new_examples_seq: 
+                            iteration_train_examples_collected.extend(new_examples_seq)
+                        print(f"Self-Play Episode {eps_num_seq+1}/{num_eps_to_run} (sequential) completed in {time.time()-start_time_seq:.2f}s. Examples: {len(new_examples_seq if new_examples_seq else [])}")
+
+                self.train_examples_history.extend(iteration_train_examples_collected)
+                
+                if self.shutdown_event.is_set():
+                    print(f"Coach: Iteration {i} post self-play: Shutdown event detected. Breaking from learn loop.", flush=True)
+                    break
+
+                if i % self.args.get('save_examples_freq', 5) == 0: 
+                    self.save_train_examples(i)
+                
+                if not self.train_examples_history:
+                    print("No training examples available. Skipping training and arena phase.")
+                    continue
+
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Training Phase...")
+                checkpoint_folder = self.args.get('checkpoint', './temp/')
+                if not os.path.exists(checkpoint_folder):
+                    os.makedirs(checkpoint_folder)
+                
+                # Save current nnet (which is the best nnet so far) to pnet_arena_weights_path to serve as the baseline/challenger
+                # self.nnet.save_checkpoint(filepath=pnet_arena_weights_path)
+                pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
+                self.nnet.save_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
+                
+                # self.pnet.load_checkpoint(filepath=pnet_arena_weights_path) # pnet (previous best) is now loaded with current best
+                self.pnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
+                
+                train_data = list(self.train_examples_history)
+                random.shuffle(train_data)
+                
+                print(f"Training nnet on {len(train_data)} examples...")
+                try:
+                    self.nnet.train(train_data) # nnet is trained in-place, becomes the new potential best
+                except KeyboardInterrupt:
+                    print("\nCoach: KeyboardInterrupt during model training. Ensuring shutdown event is set.", flush=True)
+                    self.shutdown_event.set()
+                
+                if self.shutdown_event.is_set():
+                    print(f"Coach: Iteration {i} post training: Shutdown event detected. Breaking from learn loop.", flush=True)
+                    break
+                # self.nnet.save_checkpoint(filepath=nnet_arena_weights_path) # Save the newly trained nnet for arena
+
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Arena Comparison Phase...")
+                arena_compare_games = self.args.get('arena_compare', 20)
+                arena_verbose = self.args.get('arena_verbose', False)
+                num_parallel_arena_workers = self.args.get('num_parallel_arena_workers', os.cpu_count())
+                actual_arena_workers = min(num_parallel_arena_workers, arena_compare_games, os.cpu_count() if os.cpu_count() else 1)
+                
+                print(f"Playing {arena_compare_games} games in Arena using {actual_arena_workers} parallel worker(s)...")
+
+                n_wins, p_wins, draws = 0, 0, 0
+                games_to_play_first_half = arena_compare_games // 2
+                games_to_play_second_half = arena_compare_games - games_to_play_first_half
+
+                # REMOVED self.shutdown_event from arena_worker_arg_list
+                arena_worker_arg_list_p1_vs_p2 = [
+                    (self.game.__class__, self.nnet.__class__, self.args, 
+                     nnet_arena_weights_path, pnet_arena_weights_path, game_idx, arena_verbose) 
+                    for game_idx in range(games_to_play_first_half)
+                ]
+                arena_worker_arg_list_p2_vs_p1 = [
+                    (self.game.__class__, self.nnet.__class__, self.args, 
+                     pnet_arena_weights_path, nnet_arena_weights_path, game_idx + games_to_play_first_half, arena_verbose) 
+                    for game_idx in range(games_to_play_second_half)
+                ]
+
+                game_results_p1_perspective = []
+
+                if actual_arena_workers > 1:
+                    try:
+                        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Arena: Initializing multiprocessing pool with {actual_arena_workers} workers...")
+                        with multiprocessing.Pool(processes=actual_arena_workers, initializer=init_worker_event, initargs=(self.shutdown_event,)) as pool:
+                            game_results_p1_perspective_async = []
+                            if games_to_play_first_half > 0:
+                                async_res_p1_vs_p2 = pool.map_async(_play_arena_game_worker, arena_worker_arg_list_p1_vs_p2)
+                                game_results_p1_perspective_async.append(async_res_p1_vs_p2)
+                            
+                            if games_to_play_second_half > 0 and not self.shutdown_event.is_set(): # Check event before starting second half
+                                async_res_p2_vs_p1 = pool.map_async(_play_arena_game_worker, arena_worker_arg_list_p2_vs_p1)
+                                game_results_p1_perspective_async.append(async_res_p2_vs_p1)
+                            
+                            for async_res_group_idx, async_res in enumerate(game_results_p1_perspective_async):
+                                if self.shutdown_event.is_set(): break
+                                while not async_res.ready():
+                                    try:
+                                        async_res.wait(timeout=0.5)
+                                    except multiprocessing.TimeoutError:
+                                        pass
+                                    if self.shutdown_event.is_set():
+                                        print("Coach: Shutdown signal detected during arena result wait. Terminating pool...", flush=True)
+                                        pool.terminate()
+                                        pool.join()
+                                        break 
+                                if self.shutdown_event.is_set(): break # Break from outer for loop if event set
+
+                                if not self.shutdown_event.is_set():
+                                    try:
+                                        raw_results = async_res.get(timeout=5.0)
+                                        if async_res_group_idx == 0: # P1 vs P2 results
+                                            game_results_p1_perspective.extend(r for r in raw_results if r is not None)
+                                        else: # P2 vs P1 results (need to flip perspective)
+                                            game_results_p1_perspective.extend([-res for res in raw_results if res is not None])
+                                    except multiprocessing.TimeoutError:
+                                        print("Coach: Timeout waiting for arena results from pool.", flush=True)
+                                    except Exception as e:
+                                         print(f"Error retrieving arena results: {e}", flush=True)
+                        # Pool implicitly closed/joined by `with`
+                    except Exception as e:
+                        print(f"Error during parallel arena games: {e}. Arena results might be incomplete.", flush=True)
+                else: # Sequential arena games
+                    print("Running arena games sequentially (1 worker).")
+                    for args_tuple in arena_worker_arg_list_p1_vs_p2:
+                        if self.shutdown_event.is_set(): break
+                        res = _play_arena_game_worker(args_tuple)
+                        if res is not None: game_results_p1_perspective.append(res)
+                    if not self.shutdown_event.is_set():
+                        for args_tuple in arena_worker_arg_list_p2_vs_p1:
+                            if self.shutdown_event.is_set(): break
+                            raw_res = _play_arena_game_worker(args_tuple)
+                            if raw_res is not None: game_results_p1_perspective.append(-raw_res) # Flip perspective for nnet
+                
+                if self.shutdown_event.is_set():
+                    print(f"Coach: Iteration {i} main loop end: Shutdown event detected. Breaking from learn loop.", flush=True)
+                    break
+
+                for game_result in game_results_p1_perspective:
+                    if game_result == 1: n_wins +=1
+                    elif game_result == -1: p_wins +=1
+                    else: draws +=1
+                
+                print(f"ARENA RESULTS: NewNet (nnet) wins: {n_wins}, PrevNet (pnet) wins: {p_wins}, Draws: {draws}")
+
+                total_played = n_wins + p_wins
+                if total_played == 0: 
+                    win_rate = 0
+                else:
+                    win_rate = float(n_wins) / total_played
+
+                if win_rate >= self.args.get('update_threshold', 0.50):
+                    print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
+                    # self.nnet.save_checkpoint(folder=os.path.join(self.args.get('checkpoint', './temp/')), filename='best.weights.h5') # Use defined checkpoint_folder
+                    self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.weights.h5')
+                    self.mcts.set_nnet(self.nnet) # Update self-play MCTS with newly accepted nnet
+                else:
+                    print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
+                    # self.nnet.load_checkpoint(filepath=pnet_arena_weights_path) # Revert to the previous best (pnet)
+                    pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
+                    self.nnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
+                    self.mcts.set_nnet(self.nnet) # Update self-play MCTS with the reverted nnet
+                print("------------------------")
+
+                if self.shutdown_event.is_set():
+                    print(f"Coach: Iteration {i} main loop end: Shutdown event detected. Breaking from learn loop.", flush=True)
+                    break
+
+            if self.shutdown_event.is_set():
+                print(f"Coach: Iteration {i} main loop end: Shutdown event detected. Breaking from learn loop.", flush=True)
+
+        except KeyboardInterrupt: # Should ideally be handled by sigint_handler_coach setting the event
+            print("\nCoach: KeyboardInterrupt caught in outer learn try-except. Ensuring shutdown event is set.", flush=True)
+            self.shutdown_event.set()
+        
+        finally:
+            print("Coach: learn() method finishing. Restoring original SIGINT handler.", flush=True)
+            signal.signal(signal.SIGINT, original_sigint_handler) # Restore
+            if self.shutdown_event.is_set():
+                print("Coach: learn() method terminated because shutdown signal was active at the end.", flush=True)
+            # Any other cleanup might be needed if not using `with` for pools.
+
+        # End of learn method.
 
     def save_train_examples(self, iteration):
         folder = self.args.get('checkpoint', './temp/')

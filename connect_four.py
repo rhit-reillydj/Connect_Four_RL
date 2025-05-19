@@ -245,6 +245,12 @@ class ConnectFourGame:
         """
         return board.tobytes() 
 
+    def get_max_game_len(self):
+        """
+        Returns the maximum possible number of moves in a game (board area).
+        """
+        return self.rows * self.cols
+
     def display(self, board):
         """
         Displays the board in a human-readable format.

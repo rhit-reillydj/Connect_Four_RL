@@ -97,7 +97,7 @@ def show_how_it_works_page():
         <div class='section'>
             <h2><span class='icon'>🚀</span>The AlphaFour Odyssey</h2>
             <p>Welcome to a deep dive into <strong>Dominic Reilly\'s AlphaFour</strong>! This project takes inspiration from groundbreaking AI like DeepMind\'s AlphaGo and AlphaZero, aiming to create a formidable Connect Four opponent that learns and evolves through sophisticated AI techniques. AlphaFour isn\'t just about playing a game; it\'s an exploration into the fascinating world of artificial intelligence, neural networks, and strategic decision-making.</p>
-            <p>Our journey involves a blend of cutting-edge concepts, each playing a crucial role in enabling AlphaFour to master the aparentemente simple, yet deeply strategic, game of Connect Four.</p>
+        <p>Our journey involves a blend of cutting-edge concepts, each playing a crucial role in enabling AlphaFour to master the aparentemente simple, yet deeply strategic, game of Connect Four.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -113,11 +113,11 @@ def show_how_it_works_page():
             <div class='section'>
                 <h2><span class='icon'>👁️</span>The Neural Eye: CNN</h2>
                 <p>At the heart of AlphaFour\'s ability to evaluate board positions is a <strong>Convolutional Neural Network (CNN)</strong>. Traditionally used for image recognition, a CNN is adept at identifying patterns. For AlphaFour, the game board is like an image, and the CNN learns to:</p>
-                <ul>
-                    <li>Recognize crucial patterns, threats, and opportunities.</li>
-                    <li>Estimate the likelihood of winning from the current position (the <strong>value</strong> of the state).</li>
-                    <li>Suggest promising moves to explore (the <strong>policy</strong>).</li>
-                </ul>
+            <ul>
+                <li>Recognize crucial patterns, threats, and opportunities.</li>
+                <li>Estimate the likelihood of winning from the current position (the <strong>value</strong> of the state).</li>
+                <li>Suggest promising moves to explore (the <strong>policy</strong>).</li>
+            </ul>
                 <p>This \'vision\' allows AlphaFour to make informed judgments that go beyond simple rule-based heuristics.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -129,11 +129,11 @@ def show_how_it_works_page():
             <div class='section'>
                 <h2><span class='icon'>🌳</span>Strategic Foresight: MCTS</h2>
                 <p>While the CNN provides an \'intuition\', <strong>Monte Carlo Tree Search (MCTS)</strong> provides the \'reasoning\'. MCTS is a powerful search algorithm that AlphaFour uses to:</p>
-                <ul>
-                    <li>Simulate thousands of possible game continuations from the current state.</li>
+            <ul>
+                <li>Simulate thousands of possible game continuations from the current state.</li>
                     <li>Build a game tree, exploring promising branches guided by the CNN\'s policy and value estimates.</li>
-                    <li>Balance exploring new, uncertain moves (<strong>exploration</strong>) with focusing on moves that have historically led to good outcomes (<strong>exploitation</strong>).</li>
-                </ul>
+                <li>Balance exploring new, uncertain moves (<strong>exploration</strong>) with focusing on moves that have historically led to good outcomes (<strong>exploitation</strong>).</li>
+            </ul>
                 <p>By the end of its \'thinking\' time, MCTS selects the move that has proven most robust across its simulations, effectively allowing AlphaFour to \'look ahead\' many steps.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -146,12 +146,12 @@ def show_how_it_works_page():
             <div class='section'>
                 <h2><span class='icon'>🧠</span>The Learning Engine: DRL</h2>
                 <p><strong>Deep Reinforcement Learning (DRL)</strong> is the philosophy that drives AlphaFour\'s learning. It combines Deep Learning (the \'Deep\' from our CNN) with Reinforcement Learning. The core idea is:</p>
-                <ul>
+            <ul>
                     <li>The AI (or \'agent\') learns by interacting with its environment (the Connect Four game).</li>
-                    <li>It receives <strong>rewards</strong> (for winning) or <strong>penalties</strong> (for losing or drawing).</li>
-                    <li>Over time, the agent adjusts its internal neural network (the CNN) to maximize these rewards, effectively learning to play better.</li>
-                </ul>
-                <p>This is a powerful paradigm, as the AI discovers strategies on its own, rather than being explicitly programmed with them.</p>
+                <li>It receives <strong>rewards</strong> (for winning) or <strong>penalties</strong> (for losing or drawing).</li>
+                <li>Over time, the agent adjusts its internal neural network (the CNN) to maximize these rewards, effectively learning to play better.</li>
+            </ul>
+            <p>This is a powerful paradigm, as the AI discovers strategies on its own, rather than being explicitly programmed with them.</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -160,14 +160,14 @@ def show_how_it_works_page():
             st.markdown("""
             <div class='section'>
                 <h2><span class='icon'>🔄</span>The Training Loop: Self-Play</h2>
-                <p>Inspired by AlphaGo Zero, AlphaFour primarily learns through <strong>self-play</strong>. This is a continuous improvement cycle:</p>
-                <ol>
-                    <li><strong>Play:</strong> The current best version of the AlphaFour model plays thousands of games against itself. The MCTS algorithm guides its move choices during these games.</li>
-                    <li><strong>Generate Data:</strong> Each move made and the eventual outcome of these games (win/loss/draw) are recorded as training data. This data teaches the model which board states are valuable and which moves are strong.</li>
-                    <li><strong>Train:</strong> The neural network (CNN) is then trained on this newly generated data. It learns to better predict move probabilities (policy) and game outcomes (value) from any given board state.</li>
-                    <li><strong>Evaluate & Iterate:</strong> The newly trained model is pitted against the previous best version. If it performs significantly better, it becomes the new champion, and the cycle repeats.</li>
-                </ol>
-                <p>This relentless process allows AlphaFour to bootstrap its intelligence, starting from random play (or a very basic understanding) and progressively becoming a highly skilled player.</p>
+            <p>Inspired by AlphaGo Zero, AlphaFour primarily learns through <strong>self-play</strong>. This is a continuous improvement cycle:</p>
+            <ol>
+                <li><strong>Play:</strong> The current best version of the AlphaFour model plays thousands of games against itself. The MCTS algorithm guides its move choices during these games.</li>
+                <li><strong>Generate Data:</strong> Each move made and the eventual outcome of these games (win/loss/draw) are recorded as training data. This data teaches the model which board states are valuable and which moves are strong.</li>
+                <li><strong>Train:</strong> The neural network (CNN) is then trained on this newly generated data. It learns to better predict move probabilities (policy) and game outcomes (value) from any given board state.</li>
+                <li><strong>Evaluate & Iterate:</strong> The newly trained model is pitted against the previous best version. If it performs significantly better, it becomes the new champion, and the cycle repeats.</li>
+            </ol>
+            <p>This relentless process allows AlphaFour to bootstrap its intelligence, starting from random play (or a very basic understanding) and progressively becoming a highly skilled player.</p>
             </div>
             """, unsafe_allow_html=True)
             # st.image("path/to/self_play_loop.png", caption="The AlphaGo-inspired Training Loop") # Placeholder
@@ -179,12 +179,12 @@ def show_how_it_works_page():
         <div class='section' style='text-align:center;'>
             <h2><span class='icon'>💡</span>Synergy in AlphaFour</h2>
             <p>These components don\'t work in isolation. The CNN guides the MCTS search, MCTS provides strong move choices for self-play, self-play generates rich data for DRL, and DRL refines the CNN. It\'s this beautiful synergy, pioneered by systems like AlphaGo, that Dominic Reilly\'s AlphaFour aims to capture for mastering Connect Four.</p>
-            <p>Thank you for exploring the mind of AlphaFour!</p>
+        <p>Thank you for exploring the mind of AlphaFour!</p>
         </div>
         """, unsafe_allow_html=True)
 
 # Call the function to render the page content
-show_how_it_works_page()
+    show_how_it_works_page() 
 
 # The if __name__ == "__main__": block is not strictly necessary for Streamlit pages
 # but calling the main function like this is a common pattern.

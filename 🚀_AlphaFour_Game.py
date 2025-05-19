@@ -32,8 +32,8 @@ MODEL_FILENAME = 'best.weights.h5'
 
 AI_ARGS = dotdict({
     'cpuct': 1.0,
-    'num_mcts_sims': 50,
-    'tempThreshold': 15,
+    'num_mcts_sims': 200,
+    'tempThreshold': 0,
     'temp': 0.0,
     'lr': 0.001, 'epochs': 1, 'batch_size': 32
 })

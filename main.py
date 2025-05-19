@@ -1,4 +1,7 @@
 from argparse import Namespace
+import os
+import signal
+import multiprocessing
 
 from coach import Coach
 from connect_four import ConnectFourGame
@@ -17,6 +20,9 @@ args = dotdict({
     'arena_verbose': False,   # Whether to print Arena game details.
     'cpuct': 1.5,             # Exploration constant for PUCT.
     
+    'num_parallel_self_play_workers': os.cpu_count(), # Number of parallel workers for self-play, defaults to num CPUs.
+    'num_parallel_arena_workers': os.cpu_count(),     # Number of parallel workers for arena games, defaults to num CPUs.
+
     'checkpoint': './temp_connect_four/', # Folder to save checkpoints and examples.
     'load_model': True,       # Whether to load a saved model on startup.
     'load_folder_file': ('./temp_connect_four/', 'best.weights.h5'), # MODIFIED - Tuple (folder, filename) for loading model.
@@ -36,7 +42,20 @@ args = dotdict({
     'epsilon_noise': 0.25,       # Weight of Dirichlet noise in root policy.
 })
 
+shutdown_event = multiprocessing.Event() # Global event for signaling shutdown
+
+def graceful_signal_handler(sig, frame):
+    print(f'Graceful shutdown initiated by signal {sig}...')
+    shutdown_event.set()
+
 def main():
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, graceful_signal_handler)
+    signal.signal(signal.SIGTERM, graceful_signal_handler)
+
+    # Suppress TensorFlow INFO and WARNING messages
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # 0 = all, 1 = no INFO, 2 = no INFO/WARNING, 3 = no INFO/WARNING/ERROR
+
     print("Initializing game, neural network, and coach...")
     print("Using arguments:", args)
 
@@ -47,13 +66,19 @@ def main():
         print(f"Attempting to load model from: {args.load_folder_file[0]}/{args.load_folder_file[1]}")
         # Loading is handled by Coach constructor if file exists
     
-    c = Coach(game, nnet, args)
-    
-    if args.load_model and c.skip_first_self_play:
-        print("Model and/or examples loaded. Skipping first self-play according to Coach logic.")
+    c = Coach(game, nnet, args, shutdown_event) # Pass shutdown_event to Coach
     
     print("Starting the learning process...")
-    c.learn()
+    try:
+        c.learn()
+    except KeyboardInterrupt:
+        print("Main: KeyboardInterrupt caught. Ensuring shutdown event is set.")
+        shutdown_event.set()
+    finally:
+        if shutdown_event.is_set():
+            print("Main: Learning process concluded due to shutdown signal.")
+        else:
+            print("Main: Learning process completed normally.")
 
 if __name__ == "__main__":
     # For simplicity, using direct dotdict. 
