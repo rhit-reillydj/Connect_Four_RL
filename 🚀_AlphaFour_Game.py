@@ -69,15 +69,13 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
     for r in range(rows):
         for c_idx in range(cols):
             piece_color = get_player_color_html(board_array[r][c_idx])
-            piece_extra_class = ""
-            if last_move_coords and r == last_move_coords[0] and c_idx == last_move_coords[1]:
-                piece_extra_class = " last-move-highlight"
-            
+            is_last_move = last_move_coords == (r, c_idx)
+            highlight_class = "last-move" if is_last_move else ""
             # .board-cell, .board-hole, .piece will primarily use CSS variables for sizing in their inline styles
             cell_html = (
-                f"<div class='board-cell' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
+                f"<div class='board-cell {highlight_class}' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
                 f"<div class='board-hole' style='width: calc(var(--radius) * 2); height: calc(var(--radius) * 2); background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
-                f"<div class='piece{piece_extra_class}' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease, box-shadow 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
+                f"<div class='piece' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
                 f"</div></div>"
             )
             html_board_pieces += cell_html
@@ -130,8 +128,8 @@ def initialize_game_state():
         st.session_state.ai_thinking = False
         st.session_state.error_message = None
         st.session_state.game_ready = True
-        st.session_state.last_move_coords = None
     st.session_state.game_restarted = False
+    st.session_state.last_move_coords = None # Initialize last_move_coords
 
 # --- New Helper Functions for Game Over Displays ---
 def display_win_celebration():
@@ -202,7 +200,7 @@ if clicked_action_data is not None:
                 print(f"DEBUG bridge: Move in col {action_col} is valid. Getting next state.")
                 new_board, _, move_row = game_instance.get_next_state(current_board, player_piece_val, action_col)
                 st.session_state.board = new_board
-                st.session_state.last_move_coords = (move_row, action_col)
+                st.session_state.last_move_coords = (move_row, action_col) # Store player's last move
                 game_end_result = game_instance.get_game_ended(st.session_state.board, player_piece_val, last_move_col=action_col, last_move_row=move_row)
                 if game_end_result != 0:
                     st.session_state.game_over = True
@@ -303,7 +301,7 @@ st.markdown(f"""
         align-items: center; /* Center .action-row and .board-container */
         /* --current-board-cols will be set inline here by Python */
     }}
-
+    
     .action-row {{
         display: grid; 
         /* grid-template-columns will be set inline by draw_board_html */
@@ -311,7 +309,7 @@ st.markdown(f"""
         width: fit-content; /* Width determined by its content */
         margin-bottom: 15px;
         position: relative; 
-        z-index: 10;
+        z-index: 10; 
     }}
     .action-slot {{
         display: flex;
@@ -355,7 +353,7 @@ st.markdown(f"""
         border-radius: 15px; 
         box-shadow: 0 10px 20px rgba(0,0,0,0.3); 
         padding: var(--board-padding); /* Use CSS variable for padding */
-        position: relative; 
+        position: relative;
         z-index: 1;
     }}
     .board-pieces-container {{ 
@@ -366,17 +364,10 @@ st.markdown(f"""
 
     /* board-cell, board-hole, piece styles will use CSS vars in draw_board_html */
     
-    .piece.last-move-highlight {
-        /* Glowing effect for the last moved piece */
-        box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3), 0 0 5px 3px #ffffff, 0 0 12px 6px rgba(255, 255, 255, 0.7);
-        /* Ensure the highlight is on top if pieces ever overlap (they shouldn't in Connect4 but good practice) */
-        z-index: 2; 
-    }
-
-    .stButton[data-testid*="restart_game_main_btn"]>button {{ 
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button {{ 
         /* These styles are for the old Streamlit button, not the new overlay button */
     }}
-    .stButton[data-testid*="restart_game_main_btn"]>button:hover:not(:disabled) {{ 
+    .stButton[data-testid*=\"restart_game_main_btn\"]>button:hover:not(:disabled) {{ 
         /* These styles are for the old Streamlit button, not the new overlay button */
     }}
     /* Responsive Footer */
@@ -530,6 +521,13 @@ st.markdown(f"""
       40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
     }}
 
+    .board-cell.last-move {
+        outline: 3px solid gold;
+        outline-offset: -3px; /* Pulls outline slightly inside the cell padding */
+        /* border-radius: 50%; /* If we want the highlight itself to be round */
+        /* z-index: 5; /* Ensure it's above other cells if needed, but outline shouldn't cause overlap issues */
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -563,12 +561,12 @@ mcts = st.session_state.mcts
 
 # --- Main UI Display (conditionally rendered if game not over, or to show final board state) ---
 if not game_over:
-    st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
 
 # Always display the board and action row if game is ready, so player can see final state
 if st.session_state.get("game_ready", False):
     valid_moves = game.get_valid_moves(board) 
-    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords')) # Pass game_over and last_move_coords
+    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords')) # Pass last_move_coords
     html(board_html_content)
 
 # --- AI's Turn Logic ---
@@ -597,7 +595,7 @@ if not game_over and turn == AI_PIECE and ai_thinking:
 
         new_board, _, ai_move_row = game.get_next_state(board, AI_PIECE, ai_action)
         st.session_state.board = new_board
-        st.session_state.last_move_coords = (ai_move_row, ai_action)
+        st.session_state.last_move_coords = (ai_move_row, ai_action) # Store AI's last move
         
         # Process game end after AI's move
         current_game_end_result = game.get_game_ended(st.session_state.board, AI_PIECE, last_move_col=ai_action, last_move_row=ai_move_row)
@@ -647,7 +645,7 @@ if game_over:
 
 # --- Footer ---
 if not game_over:
-    st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>Dominic Reilly's AlphaFour - Connect Four Streamlit Edition</div>", unsafe_allow_html=True)
 
 # Debugging: Display session state (optional)
 # with st.expander("Session State (Debug)"):

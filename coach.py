@@ -364,7 +364,7 @@ class Coach():
         signal.signal(signal.SIGINT, sigint_handler_coach)
 
         try:
-            for i in range(1, self.args.get('num_iters', 100) + 1):
+        for i in range(1, self.args.get('num_iters', 100) + 1):
                 if self.shutdown_event.is_set():
                     print(f"Coach: Iteration {i} loop start: Shutdown event already set. Breaking from learn loop.", flush=True)
                     break
@@ -378,7 +378,7 @@ class Coach():
                 self.nnet.save_checkpoint(folder=current_folder, filename=current_filename)
 
                 iteration_train_examples_collected = [] # Use a list to collect from workers
-                num_eps_to_run = self.args.get('num_eps', 50)
+            num_eps_to_run = self.args.get('num_eps', 50)
                 
                 # Determine number of parallel processes
                 # Max out at num_eps_to_run, or CPU count, or a user-defined arg if available
@@ -460,18 +460,18 @@ class Coach():
                     print(f"Coach: Iteration {i} post self-play: Shutdown event detected. Breaking from learn loop.", flush=True)
                     break
 
-                if i % self.args.get('save_examples_freq', 5) == 0: 
-                    self.save_train_examples(i)
-                
-                if not self.train_examples_history:
-                    print("No training examples available. Skipping training and arena phase.")
-                    continue
+            if i % self.args.get('save_examples_freq', 5) == 0: 
+                self.save_train_examples(i)
+
+            if not self.train_examples_history:
+                print("No training examples available. Skipping training and arena phase.")
+                continue
 
                 print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Training Phase...")
-                checkpoint_folder = self.args.get('checkpoint', './temp/')
-                if not os.path.exists(checkpoint_folder):
-                    os.makedirs(checkpoint_folder)
-                
+            checkpoint_folder = self.args.get('checkpoint', './temp/')
+            if not os.path.exists(checkpoint_folder):
+                os.makedirs(checkpoint_folder)
+            
                 # Save current nnet (which is the best nnet so far) to pnet_arena_weights_path to serve as the baseline/challenger
                 # self.nnet.save_checkpoint(filepath=pnet_arena_weights_path)
                 pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
@@ -479,11 +479,11 @@ class Coach():
                 
                 # self.pnet.load_checkpoint(filepath=pnet_arena_weights_path) # pnet (previous best) is now loaded with current best
                 self.pnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
-                
-                train_data = list(self.train_examples_history)
-                random.shuffle(train_data)
-                
-                print(f"Training nnet on {len(train_data)} examples...")
+            
+            train_data = list(self.train_examples_history)
+            random.shuffle(train_data)
+            
+            print(f"Training nnet on {len(train_data)} examples...")
                 try:
                     self.nnet.train(train_data) # nnet is trained in-place, becomes the new potential best
                 except KeyboardInterrupt:
@@ -585,24 +585,24 @@ class Coach():
                 
                 print(f"ARENA RESULTS: NewNet (nnet) wins: {n_wins}, PrevNet (pnet) wins: {p_wins}, Draws: {draws}")
 
-                total_played = n_wins + p_wins
-                if total_played == 0: 
-                    win_rate = 0
-                else:
-                    win_rate = float(n_wins) / total_played
+            total_played = n_wins + p_wins
+            if total_played == 0: 
+                win_rate = 0
+            else:
+                win_rate = float(n_wins) / total_played
 
-                if win_rate >= self.args.get('update_threshold', 0.50):
-                    print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
+            if win_rate >= self.args.get('update_threshold', 0.50):
+                print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
                     # self.nnet.save_checkpoint(folder=os.path.join(self.args.get('checkpoint', './temp/')), filename='best.weights.h5') # Use defined checkpoint_folder
-                    self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.weights.h5')
+                self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.weights.h5')
                     self.mcts.set_nnet(self.nnet) # Update self-play MCTS with newly accepted nnet
-                else:
-                    print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
+            else:
+                print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
                     # self.nnet.load_checkpoint(filepath=pnet_arena_weights_path) # Revert to the previous best (pnet)
                     pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
                     self.nnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
                     self.mcts.set_nnet(self.nnet) # Update self-play MCTS with the reverted nnet
-                print("------------------------")
+            print("------------------------")
 
                 if self.shutdown_event.is_set():
                     print(f"Coach: Iteration {i} main loop end: Shutdown event detected. Breaking from learn loop.", flush=True)
