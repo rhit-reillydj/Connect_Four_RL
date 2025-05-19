@@ -71,11 +71,10 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
             piece_color = get_player_color_html(board_array[r][c_idx])
             is_last_move = last_move_coords == (r, c_idx)
             highlight_class = "last-move" if is_last_move else ""
-            # .board-cell, .board-hole, .piece will primarily use CSS variables for sizing in their inline styles
             cell_html = (
-                f"<div class='board-cell {highlight_class}' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
+                f"<div class='board-cell' style='width: var(--square-size); height: var(--square-size); background-color: {BOARD_COLOR_HTML}; display: flex; justify-content: center; align-items: center;'>"
                 f"<div class='board-hole' style='width: calc(var(--radius) * 2); height: calc(var(--radius) * 2); background-color: {HOLE_COLOR_HTML}; border-radius: 50%; display: flex; justify-content: center; align-items: center; position: relative;'>"
-                f"<div class='piece' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
+                f"<div class='piece {highlight_class}' style='width: 100%; height: 100%; background-color: {piece_color}; border-radius: 50%; transition: background-color 0.3s ease; box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);'></div>"
                 f"</div></div>"
             )
             html_board_pieces += cell_html
@@ -521,11 +520,13 @@ st.markdown(f"""
       40%, 60% {{ transform: translate3d(3px, 3px, 0); }}
     }}
 
-    .board-cell.last-move {{
-        outline: 3px solid gold;
-        outline-offset: -3px; /* Pulls outline slightly inside the cell padding */
-        /* border-radius: 50%; /* If we want the highlight itself to be round */
-        /* z-index: 5; /* Ensure it's above other cells if needed, but outline shouldn't cause overlap issues */
+    .piece.last-move {{
+        border: 4px solid gold;
+        outline: 2px solid #fff;
+        box-sizing: border-box;
+        transform: scale(1.10);
+        z-index: 20;
+        transition: border 0.1s, outline 0.1s, transform 0.1s;
     }}
 
 </style>
