@@ -105,6 +105,7 @@ class ConnectFourNNet():
             examples (list): List of training examples, where each example is a tuple
                              (canonical_board, mcts_policy, value).
         """
+        print(f"Current LR before training: {tf.keras.backend.get_value(self.model.optimizer.learning_rate)}")
         input_boards, target_pis, target_vs = list(zip(*examples))
         
         # Reshape input_boards for the network: (num_examples, board_x, board_y, 1)

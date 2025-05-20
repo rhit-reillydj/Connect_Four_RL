@@ -120,7 +120,7 @@ def play_game_with_ui():
 
     print("Loading AI model...")
     nnet = ConnectFourNNet(game, ai_args) # Initialize with standard args
-    model_folder = './temp_connect_four/'
+    model_folder = './src/temp_connect_four/'
     
     # Define preferred and fallback model names
     preferred_model_filename = INTERACTIVE_MODEL_FILENAME # Should be 'best.keras'
