@@ -29,7 +29,8 @@ AI_PIECE = -1
 
 MODEL_FOLDER = '.'
 # MODEL_FILENAME = 'best.weights.h5' # Old constant, replaced by preferred/fallback
-TFLITE_MODEL_NAME = "model.tflite"
+TFLITE_MODEL_DIR = "./src/temp_connect_four/"
+TFLITE_MODEL_FILENAME = "model.tflite"
 
 # AI_ARGS for training (can be kept for reference or other uses if any)
 TRAINING_AI_ARGS = dotdict({
@@ -118,12 +119,13 @@ def load_model_and_game():
 
     try:
         # Initialize with the TFLite model directly
-        # Assumes model.tflite is in the root directory of the Streamlit app
-        nnet = ConnectFourNNetTFLite(game, model_filename=TFLITE_MODEL_NAME, model_dir=".")
+        # Assumes model.tflite is now in TFLITE_MODEL_DIR relative to project root
+        nnet = ConnectFourNNetTFLite(game, model_filename=TFLITE_MODEL_FILENAME, model_dir=TFLITE_MODEL_DIR)
+        st.success(f"Successfully loaded TFLite model: {os.path.join(TFLITE_MODEL_DIR, TFLITE_MODEL_FILENAME)}")
         # Use INFERENCE_AI_ARGS for MCTS in Streamlit app
         mcts = MCTS(game, nnet, INFERENCE_AI_ARGS)
     except FileNotFoundError as e:
-        st.error(f"TFLite model '{TFLITE_MODEL_NAME}' not found. Please run converter_script.py first. Details: {e}")
+        st.error(f"TFLite model '{os.path.join(TFLITE_MODEL_DIR, TFLITE_MODEL_FILENAME)}' not found. Please run src/converter_script.py first. Details: {e}")
         # game will be returned, but nnet and mcts will be None
     except Exception as e:
         st.error(f"Error loading TFLite model or initializing MCTS: {e}")
