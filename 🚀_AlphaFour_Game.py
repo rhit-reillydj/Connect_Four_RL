@@ -43,7 +43,7 @@ TRAINING_AI_ARGS = dotdict({
 # AI_ARGS for inference in Streamlit (MUCH faster)
 INFERENCE_AI_ARGS = dotdict({
     'cpuct': 1.0, # Standard exploration constant
-    'num_mcts_sims': 100,  # CRITICAL: Reduced for faster inference
+    'num_mcts_sims': 200,  # CRITICAL: Reduced for faster inference
     # Noise parameters usually off for deterministic best move during inference
     'add_dirichlet_noise': False,
     'dirichlet_alpha': 0.0, 
