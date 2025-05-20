@@ -135,7 +135,7 @@ class MCTS():
                 # Or if there are no valid moves (terminal state, should have been caught by Es[s] != 0)
                 print("Warning: All valid moves were masked after policy calculation (including noise), re-normalizing Ps to uniform over valids.")
                 # Log the state or policy for debugging if this happens often.
-                self.Ps[s] = valids # Fallback to uniform distribution over valid moves
+                self.Ps[s] = valids.astype(np.float64) # Fallback to uniform distribution over valid moves, ENSURE FLOAT DTYPE
                 sum_Ps_s = np.sum(self.Ps[s])
                 if sum_Ps_s > 0:
                     self.Ps[s] /= sum_Ps_s

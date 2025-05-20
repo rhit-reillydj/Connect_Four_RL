@@ -95,7 +95,8 @@ class ConnectFourNNet():
         self.model.compile(
             optimizer=Adam(learning_rate=self.args.get('lr', 0.001)), 
             loss=losses,
-            loss_weights=loss_weights
+            loss_weights=loss_weights,
+            jit_compile=True
         )
 
     def train(self, examples):

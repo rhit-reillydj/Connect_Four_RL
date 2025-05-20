@@ -6,7 +6,7 @@ from st_bridge import bridge, html # Import streamlit-bridge and html
 
 # Assuming these files are in the same directory or accessible in PYTHONPATH
 from src.connect_four import ConnectFourGame
-from src.model import ConnectFourNNet
+from src.tflite_model import ConnectFourNNetTFLite # Import TFLite NNet
 from src.mcts import MCTS
 from src.utils import dotdict
 
@@ -29,15 +29,25 @@ AI_PIECE = -1
 
 MODEL_FOLDER = './src/temp_connect_four/'
 # MODEL_FILENAME = 'best.weights.h5' # Old constant, replaced by preferred/fallback
-PREFERRED_MODEL_FILENAME = 'best.keras'
-FALLBACK_MODEL_FILENAME = 'best.weights.h5'
+TFLITE_MODEL_NAME = "model.tflite"
 
-AI_ARGS = dotdict({
+# AI_ARGS for training (can be kept for reference or other uses if any)
+TRAINING_AI_ARGS = dotdict({
     'cpuct': 1.0,
-    'num_mcts_sims': 200,
-    'tempThreshold': 0,
+    'num_mcts_sims': 200, # Original MCTS sims for training
+    'tempThreshold': 0, # This might be temp_threshold from main.py
     'temp': 0.0,
-    'lr': 0.001, 'epochs': 1, 'batch_size': 32
+    'lr': 0.001, 'epochs': 1, 'batch_size': 32 # NNet args, not directly used by MCTS class init
+})
+
+# AI_ARGS for inference in Streamlit (MUCH faster)
+INFERENCE_AI_ARGS = dotdict({
+    'cpuct': 1.0, # Standard exploration constant
+    'num_mcts_sims': 100,  # CRITICAL: Reduced for faster inference
+    # Noise parameters usually off for deterministic best move during inference
+    'add_dirichlet_noise': False,
+    'dirichlet_alpha': 0.0, 
+    'epsilon_noise': 0.0
 })
 
 # --- Helper Functions ---
@@ -103,34 +113,22 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
 @st.cache_resource
 def load_model_and_game():
     game = ConnectFourGame()
-    nnet = ConnectFourNNet(game, AI_ARGS)
-    
-    preferred_model_path = os.path.join(MODEL_FOLDER, PREFERRED_MODEL_FILENAME)
-    fallback_model_path = os.path.join(MODEL_FOLDER, FALLBACK_MODEL_FILENAME)
-    model_loaded = False
+    nnet = None
+    mcts = None
 
-    if os.path.exists(preferred_model_path):
-        try:
-            nnet.load_checkpoint(folder=MODEL_FOLDER, filename=PREFERRED_MODEL_FILENAME)
-            st.success(f"Successfully loaded model: {PREFERRED_MODEL_FILENAME}")
-            model_loaded = True
-        except Exception as e:
-            st.warning(f"Error loading preferred model {PREFERRED_MODEL_FILENAME}: {e}. Trying fallback.")
-    
-    if not model_loaded and os.path.exists(fallback_model_path):
-        try:
-            nnet.load_checkpoint(folder=MODEL_FOLDER, filename=FALLBACK_MODEL_FILENAME)
-            st.success(f"Successfully loaded fallback model: {FALLBACK_MODEL_FILENAME}")
-            model_loaded = True
-        except Exception as e:
-            st.error(f"Error loading fallback model {FALLBACK_MODEL_FILENAME}: {e}. AI may not function.")
-            return game, None, None # Critical failure if fallback also fails
-    
-    if not model_loaded:
-        st.error(f"No suitable model found. Searched for {PREFERRED_MODEL_FILENAME} and {FALLBACK_MODEL_FILENAME} in {MODEL_FOLDER}. AI will not function.")
-        return game, None, None
+    try:
+        # Initialize with the TFLite model directly
+        # Assumes model.tflite is in the root directory of the Streamlit app
+        nnet = ConnectFourNNetTFLite(game, model_filename=TFLITE_MODEL_NAME, model_dir=".")
+        # Use INFERENCE_AI_ARGS for MCTS in Streamlit app
+        mcts = MCTS(game, nnet, INFERENCE_AI_ARGS)
+    except FileNotFoundError as e:
+        st.error(f"TFLite model '{TFLITE_MODEL_NAME}' not found. Please run converter_script.py first. Details: {e}")
+        # game will be returned, but nnet and mcts will be None
+    except Exception as e:
+        st.error(f"Error loading TFLite model or initializing MCTS: {e}")
+        # game will be returned, but nnet and mcts will be None
         
-    mcts = MCTS(game, nnet, AI_ARGS)
     return game, nnet, mcts
 
 def initialize_game_state():
@@ -609,8 +607,9 @@ if not game_over and turn == AI_PIECE and ai_thinking:
         st.session_state.turn = PLAYER_PIECE
         st.session_state.ai_thinking = False
     else:
-        time.sleep(0.75)
+        time.sleep(0.75) # Keep a small delay for UX
         canonical_board_ai = game.get_canonical_form(board, AI_PIECE)
+        st.session_state.mcts.reset_search_state() # Reset MCTS state before getting action
         ai_action_probs = mcts.getActionProb(canonical_board_ai, temp=0) 
         ai_action = np.argmax(ai_action_probs)
 
