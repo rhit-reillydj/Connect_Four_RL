@@ -121,7 +121,6 @@ def load_model_and_game():
         # Initialize with the TFLite model directly
         # Assumes model.tflite is now in TFLITE_MODEL_DIR relative to project root
         nnet = ConnectFourNNetTFLite(game, model_filename=TFLITE_MODEL_FILENAME, model_dir=TFLITE_MODEL_DIR)
-        st.success(f"Successfully loaded TFLite model: {os.path.join(TFLITE_MODEL_DIR, TFLITE_MODEL_FILENAME)}")
         # Use INFERENCE_AI_ARGS for MCTS in Streamlit app
         mcts = MCTS(game, nnet, INFERENCE_AI_ARGS)
     except FileNotFoundError as e:
