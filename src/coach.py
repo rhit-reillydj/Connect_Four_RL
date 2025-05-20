@@ -369,7 +369,7 @@ class Coach():
                         print(f"Coach: Iteration {i} loop start: Shutdown event already set. Breaking from learn loop.", flush=True)
                         break
 
-                    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ------ ITERATION {i} ------")
+                    print(f"\n\n\n\n{time.strftime('%Y-%m-%d %H:%M:%S')} - ------ ITERATION {i} ------")
                     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Starting Self-Play Phase...")
                     
                     current_folder, current_filename = os.path.split(current_nnet_weights_path)

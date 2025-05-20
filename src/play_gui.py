@@ -114,8 +114,8 @@ def play_game_with_ui():
         'cpuct': 1.0,
         'num_mcts_sims': 50,
         'lr': 0.001, 'epochs': 1, 'batch_size': 32,
-        'tempThreshold': 15, # Example, assuming MCTS might use this for temp calculation
-        'temp': 1.0 # Default temperature for MCTS policy calculation for training
+        'tempThreshold': 0, # Example, assuming MCTS might use this for temp calculation
+        'temp': 0 # Default temperature for MCTS policy calculation for training
     })
 
     print("Loading AI model...")
