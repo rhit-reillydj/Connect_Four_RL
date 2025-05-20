@@ -27,7 +27,7 @@ YELLOW_AI_HTML = "#ffd700"   # Gold/Yellow
 PLAYER_PIECE = 1
 AI_PIECE = -1
 
-MODEL_FOLDER = './src/temp_connect_four/'
+MODEL_FOLDER = '.'
 # MODEL_FILENAME = 'best.weights.h5' # Old constant, replaced by preferred/fallback
 TFLITE_MODEL_NAME = "model.tflite"
 

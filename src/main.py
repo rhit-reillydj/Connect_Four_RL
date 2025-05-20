@@ -12,7 +12,7 @@ from utils import dotdict # Assuming a utils.py for dotdict or use Namespace dir
 args = dotdict({
     'num_iters': 30,          # Number of training iterations.
     'num_eps': 60,            # Number of self-play games to generate per iteration.
-    'temp_threshold': 10,     # Number of moves after which temperature becomes 0 for action selection in self-play.
+    'temp_threshold': 15,     # MODIFIED: Number of moves after which temperature becomes 0 for action selection in self-play. (Was 10)
     'update_threshold': 0.52,   # Win rate threshold to accept new model in Arena.
     'max_len_of_queue': 100000, # Maximum size of the training examples deque.
     'num_mcts_sims': 200,       # Number of MCTS simulations per move.
