@@ -122,8 +122,8 @@ class ConnectFourNNet():
         reduce_lr = ReduceLROnPlateau(
             monitor='loss',      # Monitor the total training loss
             factor=0.2,          # Factor by which the learning rate will be reduced. new_lr = lr * factor
-            patience=5,          # Number of epochs with no improvement after which learning rate will be reduced.
-            min_lr=0.00001,      # Lower bound on the learning rate.
+            patience=10,         # MODIFIED: Number of epochs with no improvement after which learning rate will be reduced (was 5).
+            min_lr=0.00005,      # MODIFIED: Lower bound on the learning rate (was 0.00001).
             verbose=1
         )
 
@@ -174,12 +174,24 @@ class ConnectFourNNet():
             filename (str): The name of the checkpoint file (e.g., .keras or .h5).
         """
         import os
-        import tensorflow as tf 
         filepath = os.path.join(folder, filename)
         if os.path.exists(filepath):
             if filename.endswith('.keras'):
                 self.model = tf.keras.models.load_model(filepath)
                 print(f"Full model loaded from {filepath} (includes optimizer state).")
+                
+                # Check and potentially reset learning rate if it's too low
+                current_lr = tf.keras.backend.get_value(self.model.optimizer.learning_rate)
+                print(f"Loaded model's current LR: {current_lr:.7f}")
+                
+                escape_threshold_lr = 0.00004 # If LR is below this (e.g., the old 1e-5)
+                reset_to_lr = 0.00005       # Reset to this value (our new min_lr for ReduceLROnPlateau)
+
+                if current_lr < escape_threshold_lr:
+                    print(f"Current LR {current_lr:.7f} is below escape threshold {escape_threshold_lr:.7f}. Setting LR to {reset_to_lr:.7f}.")
+                    self.model.optimizer.learning_rate.assign(reset_to_lr)
+                    print(f"New LR after reset: {tf.keras.backend.get_value(self.model.optimizer.learning_rate):.7f}")
+                
             elif filename.endswith('.h5'): # For backward compatibility with .weights.h5
                 # Ensure model is built before loading weights if it hasn't been used yet.
                 # A simple predict call on a dummy input can build it.

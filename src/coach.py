@@ -265,6 +265,7 @@ class Coach():
         self.args = args
         self.mcts = MCTS(self.game, self.nnet, self.args) # Reusable MCTS instance
         self.train_examples_history = deque([], maxlen=self.args.get('max_len_of_queue', 20000))
+        self.all_iteration_win_rates = [] # Added to store win rates from all iterations
 
         if self.args.get('load_model', False):
             load_folder, load_file = self.args.get('load_folder_file', ('checkpoint', 'best.weights.h5'))
@@ -352,6 +353,7 @@ class Coach():
         # Paths for arena players
         pnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'pnet_arena.keras')
         nnet_arena_weights_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'nnet_arena.keras')
+        best_model_path = os.path.join(self.args.get('checkpoint', './src/temp_connect_four/'), 'best.keras')
 
         original_sigint_handler = signal.getsignal(signal.SIGINT)
 
@@ -574,14 +576,28 @@ class Coach():
                     else:
                         win_rate = float(n_wins) / total_played
 
+                    self.all_iteration_win_rates.append(win_rate) # Store current win rate
+                    print(f"Win rates over iterations: {self.all_iteration_win_rates}") # Print all win rates
+
                     if win_rate >= self.args.get('update_threshold', 0.50):
                         print(f"ACCEPTING NEW MODEL (Win rate: {win_rate:.3f})")
                         self.nnet.save_checkpoint(folder=checkpoint_folder, filename='best.keras')
                         self.mcts.set_nnet(self.nnet)
                     else:
-                        print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f})")
-                        pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
-                        self.nnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
+                        print(f"REJECTING NEW MODEL (Win rate: {win_rate:.3f}) - Reverting to best model.")
+                        # self.nnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename) # Original line
+                        # Load the definitive best model instead of the previous iteration's pnet
+                        if os.path.exists(best_model_path):
+                            self.nnet.load_checkpoint(folder=os.path.dirname(best_model_path), filename=os.path.basename(best_model_path))
+                        else:
+                            # If best.keras doesn't exist (e.g. first iteration and no pre-trained model),
+                            # then pnet_arena_weights_path was the 'current best' (i.e. the initial nnet state before training this iter)
+                            # This case might mean we stick with the just-trained model if no best.keras exists yet.
+                            # Or, more safely, revert to the pnet which was a copy of nnet *before* this iteration's training.
+                            print(f"No 'best.keras' found at {best_model_path}. Reverting to pre-training state of this iteration (pnet).")
+                            pnet_arena_folder, pnet_arena_filename = os.path.split(pnet_arena_weights_path)
+                            self.nnet.load_checkpoint(folder=pnet_arena_folder, filename=pnet_arena_filename)
+
                         self.mcts.set_nnet(self.nnet)
                     print("------------------------")
 
