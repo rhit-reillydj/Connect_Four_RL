@@ -15,7 +15,7 @@ args = dotdict({
     'temp_threshold': 1,     # MODIFIED: Number of moves after which temperature becomes 0 for action selection in self-play. (Was 10)
     'update_threshold': 0.52,   # Win rate threshold to accept new model in Arena.
     'max_len_of_queue': 200000, # Maximum size of the training examples deque.
-    'num_mcts_sims': 200,       # Number of MCTS simulations per move.
+    'num_mcts_sims': 300,       # Number of MCTS simulations per move.
     'arena_compare': 20,      # Number of games to play in Arena for model comparison.
     'arena_verbose': False,   # Whether to print Arena game details.
     'cpuct': 1.5,             # Exploration constant for PUCT.
