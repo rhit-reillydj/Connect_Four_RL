@@ -13,11 +13,15 @@ from src.tflite_model import ConnectFourNNetTFLite # Import TFLite NNet
 from src.mcts import MCTS
 from src.utils import dotdict
 
-# Initialize bridge data processing timestamps if they don't exist
+# Initialize session state variables for timestamp tracking
 if 'last_processed_timestamp' not in st.session_state:
     st.session_state.last_processed_timestamp = None
 if 'last_restart_timestamp' not in st.session_state:
     st.session_state.last_restart_timestamp = None
+if 'last_view_board_timestamp' not in st.session_state:
+    st.session_state.last_view_board_timestamp = None
+if 'last_back_to_results_timestamp' not in st.session_state:
+    st.session_state.last_back_to_results_timestamp = None
 
 # --- Constants ---
 # SQUARESIZE_HTML and RADIUS_HTML are removed, will be controlled by CSS variables
@@ -42,7 +46,7 @@ EARLY_GAME_MCTS_SIMS = 400     # Number of MCTS simulations for early game
 # AI_ARGS for training (can be kept for reference or other uses if any)
 TRAINING_AI_ARGS = dotdict({
     'cpuct': 1.0,
-    'num_mcts_sims': 200, # Original MCTS sims for training
+    'num_mcts_sims': 300, # Original MCTS sims for training
     'tempThreshold': 0, # This might be temp_threshold from main.py
     'temp': 0.0,
     'lr': 0.001, 'epochs': 1, 'batch_size': 32 # NNet args, not directly used by MCTS class init
@@ -160,6 +164,7 @@ def initialize_game_state():
         st.session_state.total_moves_count = 0 # Initialize total moves count
     st.session_state.game_restarted = False
     st.session_state.last_move_coords = None # Initialize last_move_coords
+    st.session_state.viewing_board = False # Initialize viewing board state
 
 # --- New Helper Functions for Game Over Displays ---
 def display_win_celebration():
@@ -170,7 +175,10 @@ def display_win_celebration():
             <h1 class="win-title">VICTORY!</h1>
             <p class="win-subtitle">You conquered AlphaFour!</p>
             <p class="win-message">🎉 Congratulations, Master Strategist! 🎉</p>
-            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Play Again?</div>
+            <div class="button-container">
+                <div class="view-board-button-overlay" onclick=\"window.top.stBridges.send('view_board_signal', {{ 'timestamp': new Date().getTime() }})\">View Board</div>
+                <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Play Again?</div>
+            </div>
         </div>
     </div>
     """
@@ -183,7 +191,10 @@ def display_loss_devastation():
             <h1 class="loss-title">DEFEATED</h1>
             <p class="loss-subtitle">AlphaFour reigns supreme...</p>
             <p class="loss-message">💔 Better luck next time! 💔</p>
-            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Try Again?</div>
+            <div class="button-container">
+                <div class="view-board-button-overlay" onclick=\"window.top.stBridges.send('view_board_signal', {{ 'timestamp': new Date().getTime() }})\">View Board</div>
+                <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Try Again?</div>
+            </div>
         </div>
     </div>
     """
@@ -196,11 +207,26 @@ def display_draw_message():
             <h1 class="draw-title">IT'S A DRAW!</h1>
             <p class="draw-subtitle">A hard-fought battle!</p>
             <p class="draw-message">🤝 Well played by both sides! 🤝</p>
-            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Rematch?</div>
+            <div class="button-container">
+                <div class="view-board-button-overlay" onclick=\"window.top.stBridges.send('view_board_signal', {{ 'timestamp': new Date().getTime() }})\">View Board</div>
+                <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Rematch?</div>
+            </div>
         </div>
     </div>
     """
     html(draw_html)
+
+def display_board_view_controls():
+    """Display the controls when viewing the board after game over"""
+    controls_html = f"""
+    <div class="board-view-controls">
+        <div class="board-view-button-container">
+            <div class="back-to-results-button" onclick=\"window.top.stBridges.send('back_to_results_signal', {{ 'timestamp': new Date().getTime() }})\">Back to Results</div>
+            <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Try Again?</div>
+        </div>
+    </div>
+    """
+    html(controls_html)
 
 # --- Initialize or process restart ---
 if 'game_ready' not in st.session_state or st.session_state.get('game_restarted', False):
@@ -267,6 +293,30 @@ if restart_signal_data is not None:
         st.rerun()
     elif event_timestamp is not None and event_timestamp == st.session_state.get('last_restart_timestamp'):
         print(f"DEBUG bridge: Stale restart signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
+
+# --- Bridge for view board signal (must be called on every run to listen) ---
+view_board_signal_data = bridge("view_board_signal", default=None, key="view_board_bridge_key")
+if view_board_signal_data is not None:
+    event_timestamp = view_board_signal_data.get("timestamp")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_view_board_timestamp'):
+        print(f"DEBUG bridge: View board signal received. Timestamp: {event_timestamp}")
+        st.session_state.last_view_board_timestamp = event_timestamp
+        st.session_state.viewing_board = True
+        st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_view_board_timestamp'):
+        print(f"DEBUG bridge: Stale view board signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
+
+# --- Bridge for back to results signal (must be called on every run to listen) ---
+back_to_results_signal_data = bridge("back_to_results_signal", default=None, key="back_to_results_bridge_key")
+if back_to_results_signal_data is not None:
+    event_timestamp = back_to_results_signal_data.get("timestamp")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_back_to_results_timestamp'):
+        print(f"DEBUG bridge: Back to results signal received. Timestamp: {event_timestamp}")
+        st.session_state.last_back_to_results_timestamp = event_timestamp
+        st.session_state.viewing_board = False
+        st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_back_to_results_timestamp'):
+        print(f"DEBUG bridge: Stale back to results signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
 
 # --- CSS Styling --- 
 st.markdown(f"""
@@ -409,7 +459,9 @@ st.markdown(f"""
     }}
     
     div.st-key-player_action_bridge_key,
-    div.st-key-restart_game_bridge_key {{
+    div.st-key-restart_game_bridge_key,
+    div.st-key-view_board_bridge_key,
+    div.st-key-back_to_results_bridge_key {{
         position: absolute !important; top: -9999px !important; left: -9999px !important;
         width: 0px !important; height: 0px !important; overflow: hidden !important;
         padding: 0px !important; margin: 0px !important; border: none !important;
@@ -533,6 +585,87 @@ st.markdown(f"""
         transform: translateY(-2px);
     }}
     
+    /* Button Container for Game Over Screens */
+    .button-container {{
+        display: flex;
+        flex-direction: row;
+        gap: clamp(10px, 3vw, 20px);
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+        margin-top: clamp(20px, 4vh, 30px);
+    }}
+    
+    /* View Board Button */
+    .view-board-button-overlay {{
+        background-color: #4CAF50; /* Green for "view" action */
+        color: white;
+        padding: clamp(10px, 3vw, 15px) clamp(20px, 5vw, 30px); /* Responsive padding */
+        font-size: clamp(1em, 4vw, 1.3em); /* Responsive font size */
+        border-radius: 10px;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease, transform 0.1s ease;
+    }}
+    .view-board-button-overlay:hover {{
+        background-color: #45a049;
+        transform: translateY(-2px);
+    }}
+    
+    /* Board View Controls - Positioned below the board */
+    .board-view-controls {{
+        width: 100%;
+        max-width: 600px;
+        margin: clamp(20px, 4vh, 30px) auto 0 auto;
+        display: flex;
+        justify-content: center;
+        padding: 0 clamp(10px, 2vw, 20px);
+    }}
+    
+    .board-view-button-container {{
+        display: flex;
+        flex-direction: row;
+        gap: clamp(15px, 4vw, 25px);
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+    }}
+    
+    /* Back to Results Button */
+    .back-to-results-button {{
+        background-color: #2196F3; /* Blue for navigation action */
+        color: white;
+        padding: clamp(10px, 3vw, 15px) clamp(20px, 5vw, 30px);
+        font-size: clamp(1em, 4vw, 1.3em);
+        border-radius: 10px;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease, transform 0.1s ease;
+        white-space: nowrap;
+    }}
+    .back-to-results-button:hover {{
+        background-color: #1976D2;
+        transform: translateY(-2px);
+    }}
+    
+    /* Responsive adjustments for small screens */
+    @media (max-width: 480px) {{
+        .button-container {{
+            flex-direction: column;
+            gap: clamp(8px, 2vh, 15px);
+        }}
+        .board-view-button-container {{
+            flex-direction: column;
+            gap: clamp(10px, 2vh, 15px);
+        }}
+    }}
+
     /* Animations */
     @keyframes pulse-light {{
         0% {{ transform: scale(1); opacity: 0.9; }}
@@ -565,7 +698,78 @@ st.markdown(f"""
         border: 4px solid var(--ai-highlight-color);
     }}
 
+    /* Reset restart button margin when in button containers */
+    .button-container .restart-button-overlay,
+    .board-view-button-container .restart-button-overlay {{
+        margin-top: 0;
+    }}
+
+    /* Hide all bridge component iframes and containers */
+    iframe[src*="st_bridge.bridge.bridge"] {{
+        display: none !important;
+        height: 0px !important;
+        width: 0px !important;
+    }}
+    
+    /* Hide bridge component containers by targeting specific class patterns */
+    /* COMMENTED OUT - :has() selector not universally supported
+    .st-emotion-cache-8atqhb:has(iframe[src*="st_bridge"]) {{
+        display: none !important;
+        height: 0px !important;
+        margin: 0px !important;
+        padding: 0px !important;
+    }}
+    */
+    
+    /* Fallback: hide custom components with bridge iframes */
+    div[data-testid="stCustomComponentV1"] {{
+        position: relative;
+    }}
+    
+    /* COMMENTED OUT - was hiding the board
+    div[data-testid="stCustomComponentV1"] iframe[height="0"] {{
+        display: none !important;
+        position: absolute !important;
+        top: -9999px !important;
+        left: -9999px !important;
+    }}
+    */
+
 </style>
+
+<!--
+<script>
+// Hide bridge component containers that take up space - but preserve board components
+document.addEventListener('DOMContentLoaded', function() {{
+    function hideBridgeElements() {{
+        // Only hide iframes with specific bridge URLs that have height="0"
+        const bridgeIframes = document.querySelectorAll('iframe[src*="st_bridge.bridge.bridge"][height="0"]');
+        bridgeIframes.forEach(iframe => {{
+            // Hide the iframe itself
+            iframe.style.display = 'none';
+            iframe.style.height = '0px';
+            iframe.style.width = '0px';
+            
+            // Hide parent container only if it contains ONLY bridge content
+            const parent = iframe.closest('[data-testid="stCustomComponentV1"]');
+            if (parent && parent.children.length === 1) {{
+                parent.style.display = 'none';
+                parent.style.height = '0px';
+                parent.style.margin = '0px';
+                parent.style.padding = '0px';
+            }}
+        }});
+    }}
+    
+    // Run immediately and on mutations
+    hideBridgeElements();
+    
+    // Watch for new elements being added
+    const observer = new MutationObserver(hideBridgeElements);
+    observer.observe(document.body, {{ childList: true, subtree: true }});
+}});
+</script>
+-->
 """, unsafe_allow_html=True)
 
 # --- Main App Title ---
@@ -598,6 +802,9 @@ mcts = st.session_state.mcts
 
 # --- Main UI Display (conditionally rendered if game not over, or to show final board state) ---
 if not game_over:
+    st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
+elif game_over and st.session_state.get('viewing_board', False):
+    # Show the final game result when viewing board
     st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
 
 # Always display the board and action row if game is ready, so player can see final state
@@ -690,12 +897,17 @@ if not game_over and turn == AI_PIECE and ai_thinking:
 if game_over:
     winner_val = st.session_state.get('winner')
 
-    if winner_val == PLAYER_PIECE:
-        display_win_celebration()
-    elif winner_val == AI_PIECE:
-        display_loss_devastation()
+    # Show overlay only when not viewing board
+    if not st.session_state.get('viewing_board', False):
+        if winner_val == PLAYER_PIECE:
+            display_win_celebration()
+        elif winner_val == AI_PIECE:
+            display_loss_devastation()
+        else:
+            display_draw_message()
     else:
-        display_draw_message()
+        # When viewing board, show the back to results controls
+        display_board_view_controls()
     
     # The restart button is now part of the HTML in the display_ functions
     # and handled by the 'restart_game_signal' bridge above.
