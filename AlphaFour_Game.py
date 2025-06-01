@@ -75,6 +75,18 @@ def draw_board_html(board_array, game_cols, valid_moves_array, game_over_flag, c
     # action_row width is now fit-content, grid-template-columns defines its structure
     action_row_html = f"<div class='action-row' style='grid-template-columns: repeat(var(--current-board-cols), var(--square-size));'>"
     can_player_act = (not game_over_flag and current_turn_player == PLAYER_PIECE)
+    
+    # Get the human player's color for hover effect
+    human_color = st.session_state.get('player_color', PLAYER_PIECE)
+    
+    # Check if it's the human's turn (regardless of color)
+    is_human_turn = False
+    if human_color == PLAYER_PIECE and current_turn_player == PLAYER_PIECE:
+        is_human_turn = True
+    elif human_color == AI_PIECE and current_turn_player == AI_PIECE:
+        is_human_turn = True
+    
+    can_player_act = (not game_over_flag and is_human_turn)
 
     for c in range(cols):
         is_valid_move = valid_moves_array[c]
@@ -154,11 +166,22 @@ def initialize_game_state():
         st.session_state.game_ready = False
     else:
         st.session_state.board = game.get_initial_board()
+        
+        # Initialize color selection states
+        if 'last_color_selection_timestamp' not in st.session_state:
+            st.session_state.last_color_selection_timestamp = None
+            
+        # Always reset color selection on game restart
+        st.session_state.color_selected = False
+        st.session_state.player_color = None
+        
+        # Set default turn and message (will be updated when color is selected)
         st.session_state.turn = PLAYER_PIECE
+        st.session_state.message = ""
+        st.session_state.ai_thinking = False
+        
         st.session_state.game_over = False
         st.session_state.winner = None
-        st.session_state.message = "Your turn, Red Player! Select a column."
-        st.session_state.ai_thinking = False
         st.session_state.error_message = None
         st.session_state.game_ready = True
         st.session_state.total_moves_count = 0 # Initialize total moves count
@@ -228,6 +251,29 @@ def display_board_view_controls():
     """
     html(controls_html)
 
+def display_color_selection():
+    """Display the color selection popup for the first game"""
+    color_html = f"""
+    <div id="color-selection-overlay">
+        <div class="overlay-content">
+            <h1 class="color-title">Choose Your Color!</h1>
+            <p class="color-subtitle">Who goes first?</p>
+            <div class="color-button-container">
+                <div class="red-button-overlay" onclick=\"window.top.stBridges.send('color_selection_bridge', {{ 'color': 'red', 'timestamp': new Date().getTime() }})\">
+                    <span class="color-icon">🔴</span>
+                    <span>Play First (Red)</span>
+                </div>
+                <div class="yellow-button-overlay" onclick=\"window.top.stBridges.send('color_selection_bridge', {{ 'color': 'yellow', 'timestamp': new Date().getTime() }})\">
+                    <span class="color-icon">🟡</span>
+                    <span>Play Second (Yellow)</span>
+                </div>
+            </div>
+            <p class="color-hint">Red always goes first!</p>
+        </div>
+    </div>
+    """
+    html(color_html)
+
 # --- Initialize or process restart ---
 if 'game_ready' not in st.session_state or st.session_state.get('game_restarted', False):
     initialize_game_state()
@@ -242,32 +288,48 @@ if clicked_action_data is not None:
 
     if event_timestamp is not None and event_timestamp != st.session_state.get('last_processed_timestamp'):
         print(f"DEBUG bridge: New event received. Timestamp: {event_timestamp}, Col: {event_action_col}")
-        if not st.session_state.game_over and st.session_state.turn == PLAYER_PIECE:
+        
+        # Get the human player's color
+        human_color = st.session_state.get('player_color', PLAYER_PIECE)
+        
+        # Check if it's the human's turn
+        is_human_turn = (not st.session_state.game_over and st.session_state.turn == human_color)
+        
+        if is_human_turn:
             action_col = int(event_action_col)
             print(f"DEBUG bridge: Processing action for column {action_col}")
             current_board = st.session_state.board
             game_instance = st.session_state.game
-            player_piece_val = PLAYER_PIECE
 
             if game_instance.get_valid_moves(current_board)[action_col]:
                 print(f"DEBUG bridge: Move in col {action_col} is valid. Getting next state.")
-                new_board, _, move_row = game_instance.get_next_state(current_board, player_piece_val, action_col)
+                new_board, _, move_row = game_instance.get_next_state(current_board, human_color, action_col)
                 st.session_state.board = new_board
                 st.session_state.last_move_coords = (move_row, action_col) # Store player's last move
                 st.session_state.total_moves_count += 1 # Increment total moves count
-                game_end_result = game_instance.get_game_ended(st.session_state.board, player_piece_val, last_move_col=action_col, last_move_row=move_row)
+                game_end_result = game_instance.get_game_ended(st.session_state.board, human_color, last_move_col=action_col, last_move_row=move_row)
+                
                 if game_end_result != 0:
                     st.session_state.game_over = True
-                    st.session_state.winner = game_end_result
-                    if game_end_result == player_piece_val:
-                        st.session_state.message = "You (Red) win! 🎉"
-                    elif game_end_result == AI_PIECE:
-                        st.session_state.message = "AI (Yellow) wins! 😞"
-                    else:
+                    
+                    # game_end_result is from perspective of human_color
+                    # 1 means human won, -1 means AI won
+                    if game_end_result == 1:  # Human won
+                        st.session_state.winner = human_color
+                        color_name = "Red" if human_color == PLAYER_PIECE else "Yellow"
+                        st.session_state.message = f"You ({color_name}) win! 🎉"
+                    elif game_end_result == -1:  # AI won
+                        st.session_state.winner = -human_color  # AI color
+                        ai_color_name = "Yellow" if human_color == PLAYER_PIECE else "Red"
+                        st.session_state.message = f"AI ({ai_color_name}) wins! 😞"
+                    else:  # Draw
+                        st.session_state.winner = 0  # Use 0 for draw
                         st.session_state.message = "It's a Draw! 🤝"
                 else:
-                    st.session_state.turn = AI_PIECE
-                    st.session_state.message = "AI (Yellow) is thinking... 🤔"
+                    # Switch turn to AI
+                    st.session_state.turn = -human_color
+                    ai_color_name = "Yellow" if human_color == PLAYER_PIECE else "Red"
+                    st.session_state.message = f"AI ({ai_color_name}) is thinking... 🤔"
                     st.session_state.ai_thinking = True
             else:
                 print(f"DEBUG bridge: Move in col {action_col} is invalid.")
@@ -318,6 +380,33 @@ if back_to_results_signal_data is not None:
     elif event_timestamp is not None and event_timestamp == st.session_state.get('last_back_to_results_timestamp'):
         print(f"DEBUG bridge: Stale back to results signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
 
+# --- Bridge for color selection signal (must be called on every run to listen) ---
+color_selection_data = bridge("color_selection_bridge", default=None, key="color_selection_bridge_key")
+if color_selection_data is not None:
+    event_timestamp = color_selection_data.get("timestamp")
+    selected_color = color_selection_data.get("color")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_color_selection_timestamp'):
+        print(f"DEBUG bridge: Color selection signal received. Timestamp: {event_timestamp}, Color: {selected_color}")
+        st.session_state.last_color_selection_timestamp = event_timestamp
+        
+        # Set player color based on selection
+        if selected_color == "red":
+            st.session_state.player_color = PLAYER_PIECE  # Human plays as red (1)
+            st.session_state.turn = PLAYER_PIECE
+            st.session_state.message = "You are Red! Your turn, select a column."
+            st.session_state.ai_thinking = False
+        else:  # yellow
+            st.session_state.player_color = AI_PIECE  # Human plays as yellow (-1)
+            st.session_state.turn = PLAYER_PIECE  # Red always goes first, which is AI
+            st.session_state.message = "You are Yellow! AI (Red) is making the first move... 🤔"
+            st.session_state.ai_thinking = True
+        
+        st.session_state.color_selected = True
+        st.session_state.first_game = False
+        st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_color_selection_timestamp'):
+        print(f"DEBUG bridge: Stale color selection signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
+
 # --- CSS Styling --- 
 st.markdown(f"""
 <style>
@@ -337,6 +426,7 @@ st.markdown(f"""
         --board-padding: clamp(5px, 1.5vw, 10px);
         --player-highlight-color: {YELLOW_AI_HTML}; /* For player's red piece */
         --ai-highlight-color: {RED_PLAYER_HTML};     /* For AI's yellow piece */
+        --human-hover-color: {RED_PLAYER_HTML if st.session_state.get('player_color', PLAYER_PIECE) == PLAYER_PIECE else YELLOW_AI_HTML};
     }}
 
     body, .stApp {{ 
@@ -406,14 +496,14 @@ st.markdown(f"""
         border-radius: 50%;
         box-sizing: border-box; 
         transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
-        background-color: rgba(255, 65, 54, 0.3);
-        border: 2px solid rgba(255, 65, 54, 0.6);
+        background-color: {"rgba(255, 65, 54, 0.3)" if st.session_state.get('player_color', PLAYER_PIECE) == PLAYER_PIECE else "rgba(255, 215, 0, 0.3)"};
+        border: 2px solid {"rgba(255, 65, 54, 0.6)" if st.session_state.get('player_color', PLAYER_PIECE) == PLAYER_PIECE else "rgba(255, 215, 0, 0.6)"};
     }}
     .action-slot-valid {{ cursor: pointer !important; }}
     .action-slot-valid:hover .action-piece-visual {{
-        background-color: {RED_PLAYER_HTML};
+        background-color: var(--human-hover-color);
         background-image: none; 
-        border-color: {RED_PLAYER_HTML};
+        border-color: var(--human-hover-color);
         box-shadow: inset 0 -3px 5px rgba(0,0,0,0.3);
         transform: scale(1.05);
         opacity: 1.0;
@@ -461,7 +551,8 @@ st.markdown(f"""
     div.st-key-player_action_bridge_key,
     div.st-key-restart_game_bridge_key,
     div.st-key-view_board_bridge_key,
-    div.st-key-back_to_results_bridge_key {{
+    div.st-key-back_to_results_bridge_key,
+    div.st-key-color_selection_bridge_key {{
         position: absolute !important; top: -9999px !important; left: -9999px !important;
         width: 0px !important; height: 0px !important; overflow: hidden !important;
         padding: 0px !important; margin: 0px !important; border: none !important;
@@ -469,7 +560,7 @@ st.markdown(f"""
     }}
 
     /* Fullscreen Overlay Styles - Make them responsive */
-    #win-overlay, #loss-overlay, #draw-overlay {{
+    #win-overlay, #loss-overlay, #draw-overlay, #color-selection-overlay {{
         position: fixed;
         top: 0;
         left: 0;
@@ -484,6 +575,95 @@ st.markdown(f"""
         padding: clamp(10px, 3vw, 20px); /* Responsive padding for the overlay itself */
         box-sizing: border-box;
     }}
+    
+    /* Color Selection Overlay Styles */
+    #color-selection-overlay {{
+        background: linear-gradient(45deg, rgba(33, 37, 41, 0.95), rgba(52, 58, 64, 0.95));
+    }}
+    
+    .color-title {{
+        font-family: 'Press Start 2P', cursive;
+        font-size: clamp(1.8em, 9vw, 4em);
+        color: #fff;
+        text-shadow: 2px 2px 0px #333;
+        margin-bottom: 0.3em;
+    }}
+    
+    .color-subtitle {{
+        font-size: clamp(1em, 5vw, 1.8em);
+        color: #ddd;
+        margin-bottom: 1em;
+    }}
+    
+    .color-hint {{
+        font-size: clamp(0.9em, 4vw, 1.4em);
+        color: #aaa;
+        margin-top: 1.5em;
+        font-style: italic;
+    }}
+    
+    .color-button-container {{
+        display: flex;
+        flex-direction: row;
+        gap: clamp(20px, 5vw, 40px);
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+        margin: clamp(20px, 4vh, 30px) 0;
+    }}
+    
+    .red-button-overlay, .yellow-button-overlay {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: clamp(10px, 2vh, 15px);
+        padding: clamp(20px, 4vw, 30px) clamp(30px, 6vw, 50px);
+        font-size: clamp(1em, 4vw, 1.3em);
+        border-radius: 15px;
+        border: 3px solid transparent;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+        font-family: 'Poppins', sans-serif;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        color: white;
+    }}
+    
+    .red-button-overlay {{
+        background-color: {RED_PLAYER_HTML};
+        border-color: {RED_PLAYER_HTML};
+    }}
+    
+    .red-button-overlay:hover {{
+        background-color: #d13026;
+        transform: translateY(-5px) scale(1.05);
+        box-shadow: 0 10px 30px rgba(255, 65, 54, 0.4);
+    }}
+    
+    .yellow-button-overlay {{
+        background-color: {YELLOW_AI_HTML};
+        border-color: {YELLOW_AI_HTML};
+        color: #333; /* Dark text on yellow background */
+    }}
+    
+    .yellow-button-overlay:hover {{
+        background-color: #e6c200;
+        transform: translateY(-5px) scale(1.05);
+        box-shadow: 0 10px 30px rgba(255, 215, 0, 0.4);
+    }}
+    
+    .color-icon {{
+        font-size: clamp(2em, 8vw, 3em);
+    }}
+    
+    /* Responsive adjustments for color selection */
+    @media (max-width: 600px) {{
+        .color-button-container {{
+            flex-direction: column;
+            gap: clamp(15px, 3vh, 25px);
+        }}
+    }}
+    
     .overlay-content {{
         background-color: rgba(0,0,0,0.75); /* Slightly darker for better contrast with text */
         padding: clamp(20px, 5vw, 40px); /* Responsive padding */
@@ -800,6 +980,11 @@ ai_thinking = st.session_state.ai_thinking
 nnet = st.session_state.nnet
 mcts = st.session_state.mcts
 
+# --- Check if color selection is needed ---
+if st.session_state.get("game_ready", False) and not st.session_state.get('color_selected', False):
+    display_color_selection()
+    st.stop()  # Stop execution until color is selected
+
 # --- Main UI Display (conditionally rendered if game not over, or to show final board state) ---
 if not game_over:
     st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
@@ -808,21 +993,26 @@ elif game_over and st.session_state.get('viewing_board', False):
     st.markdown(f"<div class='game-message'>{st.session_state.message}</div>", unsafe_allow_html=True)
 
 # Always display the board and action row if game is ready, so player can see final state
-if st.session_state.get("game_ready", False):
+if st.session_state.get("game_ready", False) and st.session_state.get('color_selected', False):
     valid_moves = game.get_valid_moves(board) 
     board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords')) # Pass last_move_coords
     html(board_html_content)
 
 # --- AI's Turn Logic ---
-if not game_over and turn == AI_PIECE and ai_thinking:
+# Get the human and AI colors
+human_color = st.session_state.get('player_color', PLAYER_PIECE)
+ai_color = -human_color
+
+# Check if it's AI's turn
+if not game_over and turn == ai_color and ai_thinking:
     if nnet is None or mcts is None:
         st.error("AI components not loaded. Cannot make a move.")
         st.session_state.message = "AI Error. Your turn."
-        st.session_state.turn = PLAYER_PIECE
+        st.session_state.turn = human_color
         st.session_state.ai_thinking = False
     else:
         time.sleep(0.75) # Keep a small delay for UX
-        canonical_board_ai = game.get_canonical_form(board, AI_PIECE)
+        canonical_board_ai = game.get_canonical_form(board, ai_color)
         st.session_state.mcts.reset_search_state() # Reset MCTS state before getting action
 
         # Determine MCTS simulations based on game phase
@@ -857,38 +1047,34 @@ if not game_over and turn == AI_PIECE and ai_thinking:
                 st.rerun() 
                 st.stop() 
 
-        new_board, _, ai_move_row = game.get_next_state(board, AI_PIECE, ai_action)
+        new_board, _, ai_move_row = game.get_next_state(board, ai_color, ai_action)
         st.session_state.board = new_board
         st.session_state.last_move_coords = (ai_move_row, ai_action) # Store AI's last move
         st.session_state.total_moves_count += 1 # Increment total moves count
         
         # Process game end after AI's move
-        current_game_end_result = game.get_game_ended(st.session_state.board, AI_PIECE, last_move_col=ai_action, last_move_row=ai_move_row)
+        current_game_end_result = game.get_game_ended(st.session_state.board, ai_color, last_move_col=ai_action, last_move_row=ai_move_row)
         
         if current_game_end_result != 0: # Game has ended
             st.session_state.game_over = True
             
-            # Correctly determine st.session_state.winner based on who moved (AI) and the result
-            # This addresses the bug where AI winning might return PLAYER_PIECE from get_game_ended
-            if current_game_end_result == PLAYER_PIECE: 
-                # If get_game_ended returns PLAYER_PIECE (1) after AI's move, assume AI (-1) won
-                st.session_state.winner = AI_PIECE 
-            elif current_game_end_result == AI_PIECE: 
-                # If get_game_ended returns AI_PIECE (-1) after AI's move, assume Player (1) won (AI blundered)
-                st.session_state.winner = PLAYER_PIECE
-            else: # Draw or other neutral end state
-                st.session_state.winner = current_game_end_result # Use the draw value directly
-
-            # Set message based on the corrected st.session_state.winner
-            if st.session_state.winner == AI_PIECE:
-                st.session_state.message = "AI (Yellow) wins! 😞"
-            elif st.session_state.winner == PLAYER_PIECE:
-                st.session_state.message = "You (Red) win! 🎉"
-            else: # Draw
+            # current_game_end_result is from perspective of ai_color
+            # 1 means AI won, -1 means human won
+            if current_game_end_result == 1:  # AI won
+                st.session_state.winner = ai_color
+                ai_color_name = "Red" if ai_color == PLAYER_PIECE else "Yellow"
+                st.session_state.message = f"AI ({ai_color_name}) wins! 😞"
+            elif current_game_end_result == -1:  # Human won
+                st.session_state.winner = human_color
+                human_color_name = "Red" if human_color == PLAYER_PIECE else "Yellow"
+                st.session_state.message = f"You ({human_color_name}) win! 🎉"
+            else:  # Draw
+                st.session_state.winner = 0  # Use 0 for draw
                 st.session_state.message = "It's a Draw! 🤝"
         else: # Game continues
-            st.session_state.turn = PLAYER_PIECE
-            st.session_state.message = "Your turn, Red Player! Select a column."
+            st.session_state.turn = human_color
+            human_color_name = "Red" if human_color == PLAYER_PIECE else "Yellow"
+            st.session_state.message = f"Your turn! Select a column."
             
     st.session_state.ai_thinking = False
     st.rerun()
@@ -896,12 +1082,13 @@ if not game_over and turn == AI_PIECE and ai_thinking:
 # --- Game Over Display and Restart ---
 if game_over:
     winner_val = st.session_state.get('winner')
+    human_color = st.session_state.get('player_color', PLAYER_PIECE)
 
     # Show overlay only when not viewing board
     if not st.session_state.get('viewing_board', False):
-        if winner_val == PLAYER_PIECE:
+        if winner_val == human_color:
             display_win_celebration()
-        elif winner_val == AI_PIECE:
+        elif winner_val == -human_color:
             display_loss_devastation()
         else:
             display_draw_message()
