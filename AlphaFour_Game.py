@@ -5,7 +5,7 @@ import time
 from st_bridge import bridge, html # Import streamlit-bridge and html
 
 # --- Page Configuration (Main App Page) ---
-st.set_page_config(page_title="Dominic Reilly's AlphaFour Model!", page_icon="favicon/alphafour.png", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Dominic Reilly's AlphaFour Model!", page_icon="favicon/alphafour.png", layout="wide", initial_sidebar_state="collapsed")
 
 # Assuming these files are in the same directory or accessible in PYTHONPATH
 from src.connect_four import ConnectFourGame
@@ -22,6 +22,11 @@ if 'last_view_board_timestamp' not in st.session_state:
     st.session_state.last_view_board_timestamp = None
 if 'last_back_to_results_timestamp' not in st.session_state:
     st.session_state.last_back_to_results_timestamp = None
+# Initialize session state variables for move history navigation
+if 'last_prev_move_timestamp' not in st.session_state:
+    st.session_state.last_prev_move_timestamp = None
+if 'last_next_move_timestamp' not in st.session_state:
+    st.session_state.last_next_move_timestamp = None
 
 # --- Constants ---
 # SQUARESIZE_HTML and RADIUS_HTML are removed, will be controlled by CSS variables
@@ -185,6 +190,9 @@ def initialize_game_state():
         st.session_state.error_message = None
         st.session_state.game_ready = True
         st.session_state.total_moves_count = 0 # Initialize total moves count
+        # Initialize move history tracking
+        st.session_state.move_history = [st.session_state.board.copy()]  # Start with initial board
+        st.session_state.current_history_index = 0  # Index in move_history for current view
     st.session_state.game_restarted = False
     st.session_state.last_move_coords = None # Initialize last_move_coords
     st.session_state.viewing_board = False # Initialize viewing board state
@@ -241,8 +249,19 @@ def display_draw_message():
 
 def display_board_view_controls():
     """Display the controls when viewing the board after game over"""
+    # Check if we have move history to navigate
+    history_length = len(st.session_state.get('move_history', []))
+    current_index = st.session_state.get('current_history_index', 0)
+    
+    # Calculate move number for display
+    move_number = current_index
+    total_moves = history_length - 1  # Subtract 1 because we include initial board
+    
     controls_html = f"""
     <div class="board-view-controls">
+        <div class="move-counter">
+            Move {move_number} / {total_moves}
+        </div>
         <div class="board-view-button-container">
             <div class="back-to-results-button" onclick=\"window.top.stBridges.send('back_to_results_signal', {{ 'timestamp': new Date().getTime() }})\">Back to Results</div>
             <div class="restart-button-overlay" onclick=\"window.top.stBridges.send('restart_game_signal', {{ 'timestamp': new Date().getTime() }})\">Try Again?</div>
@@ -273,6 +292,33 @@ def display_color_selection():
     </div>
     """
     html(color_html)
+
+def display_board_with_navigation(board_html_content):
+    """Display the board with navigation arrows on the sides when viewing board history"""
+    # Check if we have move history to navigate
+    history_length = len(st.session_state.get('move_history', []))
+    current_index = st.session_state.get('current_history_index', 0)
+    
+    # Determine if navigation buttons should be enabled
+    can_go_prev = current_index > 0
+    can_go_next = current_index < history_length - 1
+    
+    board_with_nav_html = f"""
+    <div class="board-with-navigation">
+        <div class="nav-arrow-left move-nav-button {'disabled' if not can_go_prev else ''}" 
+             onclick=\"{'window.top.stBridges.send(\'prev_move_signal\', { \'timestamp\': new Date().getTime() })' if can_go_prev else ''}\">
+            <span class="nav-arrow">←</span>
+        </div>
+        <div class="board-content">
+            {board_html_content}
+        </div>
+        <div class="nav-arrow-right move-nav-button {'disabled' if not can_go_next else ''}" 
+             onclick=\"{'window.top.stBridges.send(\'next_move_signal\', { \'timestamp\': new Date().getTime() })' if can_go_next else ''}\">
+            <span class="nav-arrow">→</span>
+        </div>
+    </div>
+    """
+    html(board_with_nav_html)
 
 # --- Initialize or process restart ---
 if 'game_ready' not in st.session_state or st.session_state.get('game_restarted', False):
@@ -307,6 +353,9 @@ if clicked_action_data is not None:
                 st.session_state.board = new_board
                 st.session_state.last_move_coords = (move_row, action_col) # Store player's last move
                 st.session_state.total_moves_count += 1 # Increment total moves count
+                # Add the new board state to move history
+                st.session_state.move_history.append(new_board.copy())
+                st.session_state.current_history_index = len(st.session_state.move_history) - 1
                 game_end_result = game_instance.get_game_ended(st.session_state.board, human_color, last_move_col=action_col, last_move_row=move_row)
                 
                 if game_end_result != 0:
@@ -364,6 +413,10 @@ if view_board_signal_data is not None:
         print(f"DEBUG bridge: View board signal received. Timestamp: {event_timestamp}")
         st.session_state.last_view_board_timestamp = event_timestamp
         st.session_state.viewing_board = True
+        # Set to show the final board state when first viewing
+        move_history = st.session_state.get('move_history', [])
+        if len(move_history) > 0:
+            st.session_state.current_history_index = len(move_history) - 1
         st.rerun()
     elif event_timestamp is not None and event_timestamp == st.session_state.get('last_view_board_timestamp'):
         print(f"DEBUG bridge: Stale view board signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
@@ -406,6 +459,37 @@ if color_selection_data is not None:
         st.rerun()
     elif event_timestamp is not None and event_timestamp == st.session_state.get('last_color_selection_timestamp'):
         print(f"DEBUG bridge: Stale color selection signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
+
+# --- Bridge for previous move navigation (must be called on every run to listen) ---
+prev_move_signal_data = bridge("prev_move_signal", default=None, key="prev_move_bridge_key")
+if prev_move_signal_data is not None:
+    event_timestamp = prev_move_signal_data.get("timestamp")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_prev_move_timestamp'):
+        print(f"DEBUG bridge: Previous move signal received. Timestamp: {event_timestamp}")
+        st.session_state.last_prev_move_timestamp = event_timestamp
+        # Navigate to previous move in history
+        current_index = st.session_state.get('current_history_index', 0)
+        if current_index > 0:
+            st.session_state.current_history_index = current_index - 1
+            st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_prev_move_timestamp'):
+        print(f"DEBUG bridge: Stale previous move signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
+
+# --- Bridge for next move navigation (must be called on every run to listen) ---
+next_move_signal_data = bridge("next_move_signal", default=None, key="next_move_bridge_key")
+if next_move_signal_data is not None:
+    event_timestamp = next_move_signal_data.get("timestamp")
+    if event_timestamp is not None and event_timestamp != st.session_state.get('last_next_move_timestamp'):
+        print(f"DEBUG bridge: Next move signal received. Timestamp: {event_timestamp}")
+        st.session_state.last_next_move_timestamp = event_timestamp
+        # Navigate to next move in history
+        current_index = st.session_state.get('current_history_index', 0)
+        history_length = len(st.session_state.get('move_history', []))
+        if current_index < history_length - 1:
+            st.session_state.current_history_index = current_index + 1
+            st.rerun()
+    elif event_timestamp is not None and event_timestamp == st.session_state.get('last_next_move_timestamp'):
+        print(f"DEBUG bridge: Stale next move signal (timestamp matches last processed: {event_timestamp}). Ignoring.")
 
 # --- CSS Styling --- 
 st.markdown(f"""
@@ -552,7 +636,9 @@ st.markdown(f"""
     div.st-key-restart_game_bridge_key,
     div.st-key-view_board_bridge_key,
     div.st-key-back_to_results_bridge_key,
-    div.st-key-color_selection_bridge_key {{
+    div.st-key-color_selection_bridge_key,
+    div.st-key-prev_move_bridge_key,
+    div.st-key-next_move_bridge_key {{
         position: absolute !important; top: -9999px !important; left: -9999px !important;
         width: 0px !important; height: 0px !important; overflow: hidden !important;
         padding: 0px !important; margin: 0px !important; border: none !important;
@@ -801,8 +887,88 @@ st.markdown(f"""
         max-width: 600px;
         margin: clamp(20px, 4vh, 30px) auto 0 auto;
         display: flex;
-        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        gap: clamp(15px, 3vh, 20px);
         padding: 0 clamp(10px, 2vw, 20px);
+    }}
+    
+    /* Move Counter */
+    .move-counter {{
+        background-color: rgba(255, 255, 255, 0.9);
+        color: #333;
+        padding: clamp(8px, 2vw, 12px) clamp(12px, 3vw, 16px);
+        border-radius: 20px;
+        font-size: clamp(0.9em, 3vw, 1.1em);
+        font-weight: 600;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }}
+    
+    /* Board with Navigation Layout */
+    .board-with-navigation {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: clamp(15px, 3vw, 25px);
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0 clamp(10px, 2vw, 20px);
+    }}
+    
+    .board-content {{
+        flex: 0 0 auto;
+    }}
+    
+    /* Navigation Arrow Buttons */
+    .move-nav-button {{
+        width: clamp(50px, 10vw, 70px);
+        height: clamp(50px, 10vw, 70px);
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: clamp(24px, 5vw, 32px);
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        user-select: none;
+        flex: 0 0 auto;
+    }}
+    
+    .move-nav-button:hover:not(.disabled) {{
+        background-color: #45a049;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }}
+    
+    .move-nav-button.disabled {{
+        background-color: #cccccc;
+        color: #888888;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }}
+    
+    .nav-arrow {{
+        line-height: 1;
+        font-family: 'Arial', sans-serif;
+    }}
+    
+    /* Responsive adjustments for navigation */
+    @media (max-width: 600px) {{
+        .board-with-navigation {{
+            gap: clamp(10px, 2vw, 15px);
+        }}
+        .move-nav-button {{
+            width: clamp(45px, 8vw, 55px);
+            height: clamp(45px, 8vw, 55px);
+            font-size: clamp(20px, 4vw, 26px);
+        }}
     }}
     
     .board-view-button-container {{
@@ -994,9 +1160,42 @@ elif game_over and st.session_state.get('viewing_board', False):
 
 # Always display the board and action row if game is ready, so player can see final state
 if st.session_state.get("game_ready", False) and st.session_state.get('color_selected', False):
-    valid_moves = game.get_valid_moves(board) 
-    board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords')) # Pass last_move_coords
-    html(board_html_content)
+    # When viewing board and navigating history, show the historical board state
+    if game_over and st.session_state.get('viewing_board', False):
+        # Get the board state from move history based on current index
+        current_index = st.session_state.get('current_history_index', 0)
+        move_history = st.session_state.get('move_history', [])
+        if current_index < len(move_history):
+            display_board = move_history[current_index]
+        else:
+            display_board = board  # Fallback to current board
+        
+        # For historical moves, disable interaction (all moves invalid)
+        valid_moves = [False] * board_cols
+        
+        # Calculate last move coordinates for highlighting
+        display_last_move_coords = None
+        if current_index > 0 and current_index < len(move_history):
+            # Find the difference between current and previous board to highlight the move
+            prev_board = move_history[current_index - 1]
+            curr_board = move_history[current_index]
+            
+            # Find where a piece was added
+            for r in range(board_rows):
+                for c in range(board_cols):
+                    if prev_board[r][c] == 0 and curr_board[r][c] != 0:
+                        display_last_move_coords = (r, c)
+                        break
+                if display_last_move_coords:
+                    break
+        
+        board_html_content = draw_board_html(display_board, board_cols, valid_moves, True, turn, display_last_move_coords)
+        display_board_with_navigation(board_html_content)
+    else:
+        # Normal gameplay - show current board state
+        valid_moves = game.get_valid_moves(board) 
+        board_html_content = draw_board_html(board, board_cols, valid_moves, game_over, turn, st.session_state.get('last_move_coords'))
+        html(board_html_content)
 
 # --- AI's Turn Logic ---
 # Get the human and AI colors
@@ -1051,6 +1250,9 @@ if not game_over and turn == ai_color and ai_thinking:
         st.session_state.board = new_board
         st.session_state.last_move_coords = (ai_move_row, ai_action) # Store AI's last move
         st.session_state.total_moves_count += 1 # Increment total moves count
+        # Add the new board state to move history
+        st.session_state.move_history.append(new_board.copy())
+        st.session_state.current_history_index = len(st.session_state.move_history) - 1
         
         # Process game end after AI's move
         current_game_end_result = game.get_game_ended(st.session_state.board, ai_color, last_move_col=ai_action, last_move_row=ai_move_row)
