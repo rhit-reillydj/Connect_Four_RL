@@ -468,8 +468,32 @@ class Coach():
                     random.shuffle(train_data)
                 
                     print(f"Training nnet on {len(train_data)} examples...")
+                    training_method = self.args.get('training_method', 'single')
+                    
                     try:
-                        self.nnet.train(train_data)
+                        training_start_time = time.time()
+                        
+                        if training_method == 'data_parallel':
+                            # Use custom data parallel training
+                            num_workers = self.args.get('num_training_workers', None)
+                            print(f"Using data parallel training method...")
+                            self.nnet.train_parallel_data(train_data, num_workers=num_workers)
+                        elif training_method == 'distributed' and self.args.get('use_distributed_training', True):
+                            # Use TensorFlow's distributed training (default)
+                            print(f"Using TensorFlow distributed training method...")
+                            self.nnet.train(train_data)
+                        else:
+                            # Use single-threaded training
+                            print(f"Using single-threaded training method...")
+                            # Temporarily disable distributed training for this call
+                            original_distributed = self.nnet.use_distributed
+                            self.nnet.use_distributed = False
+                            self.nnet.train(train_data)
+                            self.nnet.use_distributed = original_distributed
+                        
+                        training_duration = time.time() - training_start_time
+                        print(f"Training completed in {training_duration:.2f} seconds using {training_method} method")
+                        
                     except KeyboardInterrupt:
                         print("\nCoach: KeyboardInterrupt during model training. Ensuring shutdown event is set.", flush=True)
                         self.shutdown_event.set()

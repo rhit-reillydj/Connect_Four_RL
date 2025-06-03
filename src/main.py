@@ -20,8 +20,12 @@ args = dotdict({
     'arena_verbose': False,   # Whether to print Arena game details.
     'cpuct': 1.5,             # Exploration constant for PUCT.
     
-    'num_parallel_self_play_workers': os.cpu_count(), # Number of parallel workers for self-play, defaults to num CPUs.
-    'num_parallel_arena_workers': os.cpu_count(),     # Number of parallel workers for arena games, defaults to num CPUs.
+    # CPU Usage Control
+    'cpu_usage_fraction': 1.0,  # Fraction of CPU cores to use (0.0-1.0). 0.75 = 75% of cores to reduce heating
+    'max_cpu_cores': None,       # Alternative: Set absolute max number of cores to use (overrides cpu_usage_fraction if set)
+    
+    'num_parallel_self_play_workers': None,  # Will be calculated based on CPU limits if None
+    'num_parallel_arena_workers': None,      # Will be calculated based on CPU limits if None
 
     'checkpoint': './src/temp_connect_four/', # Folder to save checkpoints and examples.
     'load_model': True,       # Whether to load a saved model on startup.
@@ -35,6 +39,11 @@ args = dotdict({
     'num_res_blocks': 5,      # Number of residual blocks in NNet.
     'num_channels': 64,       # Number of channels in NNet conv layers.
     # 'dropout': 0.3,         # Dropout rate (if used in model)
+    
+    # Distributed Training specific args
+    'use_distributed_training': True,  # Enable distributed/multithreaded training for faster model training.
+    'training_method': 'distributed',   # Training method: 'single', 'distributed', or 'data_parallel'
+    'num_training_workers': None,       # Number of parallel training workers for data_parallel method (None = auto)
 
     # MCTS specific args for exploration during self-play
     'add_dirichlet_noise': True, # Add Dirichlet noise at the root node in self-play.
@@ -43,6 +52,104 @@ args = dotdict({
 })
 
 shutdown_event = multiprocessing.Event() # Global event for signaling shutdown
+
+def calculate_cpu_workers(args):
+    """
+    Calculate the number of CPU workers to use based on user preferences.
+    This helps control CPU usage and reduce system heating.
+    
+    Returns:
+        int: Number of CPU workers to use
+    """
+    total_cores = os.cpu_count() or 1
+    
+    # If max_cpu_cores is explicitly set, use that (with bounds checking)
+    if args.get('max_cpu_cores') is not None:
+        max_cores = args.get('max_cpu_cores')
+        if max_cores <= 0:
+            print(f"Warning: max_cpu_cores must be positive, using 1 core instead of {max_cores}")
+            return 1
+        elif max_cores > total_cores:
+            print(f"Warning: max_cpu_cores ({max_cores}) exceeds available cores ({total_cores}), using {total_cores}")
+            return total_cores
+        else:
+            return max_cores
+    
+    # Otherwise use cpu_usage_fraction
+    cpu_fraction = args.get('cpu_usage_fraction', 0.75)
+    if cpu_fraction <= 0:
+        print(f"Warning: cpu_usage_fraction must be positive, using 0.25 instead of {cpu_fraction}")
+        cpu_fraction = 0.25
+    elif cpu_fraction > 1.0:
+        print(f"Warning: cpu_usage_fraction cannot exceed 1.0, using 1.0 instead of {cpu_fraction}")
+        cpu_fraction = 1.0
+    
+    calculated_workers = max(1, int(total_cores * cpu_fraction))
+    print(f"CPU Usage Control: Using {calculated_workers}/{total_cores} cores ({cpu_fraction*100:.0f}% of available CPU)")
+    
+    return calculated_workers
+
+def check_gpu_availability():
+    """
+    Check for GPU availability and report GPU information.
+    This helps users understand their hardware setup.
+    """
+    try:
+        import tensorflow as tf
+        
+        # Check if TensorFlow can see any GPUs
+        physical_gpus = tf.config.list_physical_devices('GPU')
+        logical_gpus = tf.config.list_logical_devices('GPU')
+        
+        print("\n=== GPU Detection Results ===")
+        print(f"Physical GPUs detected: {len(physical_gpus)}")
+        print(f"Logical GPUs available: {len(logical_gpus)}")
+        
+        if physical_gpus:
+            print("\n📊 GPU Details:")
+            for i, gpu in enumerate(physical_gpus):
+                print(f"  GPU {i}: {gpu.name}")
+                try:
+                    # Try to get more detailed GPU info
+                    gpu_details = tf.config.experimental.get_device_details(gpu)
+                    if gpu_details:
+                        for key, value in gpu_details.items():
+                            print(f"    {key}: {value}")
+                except:
+                    pass  # Some systems may not support detailed GPU info
+            
+            # Check if TensorFlow is actually using GPUs
+            print(f"\n🔧 TensorFlow GPU Configuration:")
+            print(f"  - Built with CUDA support: {tf.test.is_built_with_cuda()}")
+            print(f"  - GPU device available for TensorFlow: {tf.test.is_gpu_available()}")
+            
+            # Test a simple operation to see which device TensorFlow chooses
+            try:
+                tf.debugging.set_log_device_placement(False)  # Disable verbose logging
+                with tf.device('/GPU:0'):
+                    test_tensor = tf.constant([1.0, 2.0, 3.0])
+                    result = tf.reduce_sum(test_tensor)
+                print(f"  - GPU operations test: ✅ SUCCESS (result: {result.numpy()})")
+            except Exception as e:
+                print(f"  - GPU operations test: ❌ FAILED ({str(e)})")
+                
+        else:
+            print("❌ No GPUs detected. Training will use CPU only.")
+            print("   Consider checking:")
+            print("   - GPU drivers are installed")
+            print("   - CUDA is properly configured") 
+            print("   - TensorFlow-GPU is installed")
+        
+        return len(physical_gpus) > 0
+        
+    except ImportError:
+        print("❌ TensorFlow not available for GPU detection")
+        return False
+    except Exception as e:
+        print(f"❌ Error during GPU detection: {e}")
+        return False
+    finally:
+        print("=" * 30)
 
 def graceful_signal_handler(sig, frame):
     print(f'Graceful shutdown initiated by signal {sig}...')
@@ -56,11 +163,41 @@ def main():
     # Suppress TensorFlow INFO and WARNING messages
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # 0 = all, 1 = no INFO, 2 = no INFO/WARNING, 3 = no INFO/WARNING/ERROR
 
-    print("Initializing game, neural network, and coach...")
+    print("=" * 60)
+    print("🎯 AlphaFour Connect Four RL Training")
+    print("=" * 60)
+    
+    # Check GPU availability and report findings
+    gpu_available = check_gpu_availability()
+    
+    # Calculate CPU workers based on user settings
+    cpu_workers = calculate_cpu_workers(args)
+    
+    # Apply CPU limits to parallel worker settings if they weren't explicitly set
+    if args.get('num_parallel_self_play_workers') is None:
+        args['num_parallel_self_play_workers'] = cpu_workers
+    
+    if args.get('num_parallel_arena_workers') is None:
+        args['num_parallel_arena_workers'] = cpu_workers
+    
+    if args.get('num_training_workers') is None:
+        args['num_training_workers'] = cpu_workers
+    
+    print(f"\n🔧 Configuration Summary:")
+    print(f"  - Self-play workers: {args['num_parallel_self_play_workers']}")
+    print(f"  - Arena workers: {args['num_parallel_arena_workers']}")
+    print(f"  - Training workers: {args['num_training_workers']} (for data_parallel method)")
+    print(f"  - Training method: {args['training_method']}")
+    if gpu_available:
+        print(f"  - GPU acceleration: ✅ Enabled")
+    else:
+        print(f"  - GPU acceleration: ❌ CPU only")
+    
+    print("\nInitializing game, neural network, and coach...")
     # print("Using arguments:", args) # Removed for cleaner output
 
     game = ConnectFourGame() # Using default 6x7 board
-    nnet = ConnectFourNNet(game, args)
+    nnet = ConnectFourNNet(game, args, shutdown_event)  # Pass shutdown_event to enable graceful training interruption
 
     if args.load_model:
         print(f"Attempting to load model from: {args.load_folder_file[0]}/{args.load_folder_file[1]}")
