@@ -303,17 +303,21 @@ def display_board_with_navigation(board_html_content):
     can_go_prev = current_index > 0
     can_go_next = current_index < history_length - 1
     
+    # Pre-define the JavaScript code to avoid backslashes in f-string expressions
+    prev_onclick = "window.top.stBridges.send('prev_move_signal', { 'timestamp': new Date().getTime() })" if can_go_prev else ""
+    next_onclick = "window.top.stBridges.send('next_move_signal', { 'timestamp': new Date().getTime() })" if can_go_next else ""
+    
     board_with_nav_html = f"""
     <div class="board-with-navigation">
         <div class="nav-arrow-left move-nav-button {'disabled' if not can_go_prev else ''}" 
-             onclick=\"{'window.top.stBridges.send(\'prev_move_signal\', { \'timestamp\': new Date().getTime() })' if can_go_prev else ''}\">
+             onclick="{prev_onclick}">
             <span class="nav-arrow">←</span>
         </div>
         <div class="board-content">
             {board_html_content}
         </div>
         <div class="nav-arrow-right move-nav-button {'disabled' if not can_go_next else ''}" 
-             onclick=\"{'window.top.stBridges.send(\'next_move_signal\', { \'timestamp\': new Date().getTime() })' if can_go_next else ''}\">
+             onclick="{next_onclick}">
             <span class="nav-arrow">→</span>
         </div>
     </div>
