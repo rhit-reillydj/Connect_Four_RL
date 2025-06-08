@@ -21,7 +21,7 @@ args = dotdict({
     'cpuct': 1.5,             # Exploration constant for PUCT.
     
     # CPU Usage Control
-    'cpu_usage_fraction': 1.0,  # Fraction of CPU cores to use (0.0-1.0). 0.75 = 75% of cores to reduce heating
+    'cpu_usage_fraction': 0.8,  # Fraction of CPU cores to use (0.0-1.0). 0.75 = 75% of cores to reduce heating
     'max_cpu_cores': None,       # Alternative: Set absolute max number of cores to use (overrides cpu_usage_fraction if set)
     
     'num_parallel_self_play_workers': None,  # Will be calculated based on CPU limits if None
