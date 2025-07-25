@@ -5,7 +5,7 @@ import time
 from st_bridge import bridge, html # Import streamlit-bridge and html
 
 # --- Page Configuration (Main App Page) ---
-st.set_page_config(page_title="Dominic Reilly's AlphaFour Model!", page_icon="favicon/alphafour.png", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Dominic Reilly's AlphaFour Model!", page_icon="favicon/alphafour.png", layout="wide", initial_sidebar_state="expanded")
 
 # Assuming these files are in the same directory or accessible in PYTHONPATH
 from src.connect_four import ConnectFourGame
